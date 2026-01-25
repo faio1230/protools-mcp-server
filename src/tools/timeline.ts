@@ -23,7 +23,8 @@ export const timelineTools = [
       'Synchronizes the local cache with the Pro Tools timeline. ' +
       'MANDATORY to call this tool if the user mentions recording new clips, moving audio on the timeline, or renaming tracks. ' +
       'It triggers "Export Session Info as Text" in Pro Tools and parses the result to build a timeline map. ' +
-      'This provides a searchable index of all clips and their timeline positions.',
+      'This provides a searchable index of audio clips and their timeline positions. ' +
+      'LIMITATION: Only indexes audio clips - MIDI clips cannot be indexed due to PTSL API restrictions.',
     inputSchema: {
       type: 'object',
       properties: {},
@@ -87,9 +88,10 @@ export const timelineTools = [
   {
     name: 'search_timeline',
     description:
-      'Fast search of the locally cached timeline index. Queries clip names, track names, and markers. ' +
+      'Fast search of the locally cached timeline index. Queries audio clip names and track names. ' +
       'Does not communicate with Pro Tools directly. If a search yields no results for a clip the user says exists, ' +
-      'suggest calling refresh_pro_tools_index to update the cache.',
+      'suggest calling refresh_pro_tools_index to update the cache. ' +
+      'LIMITATION: Only searches audio clips - MIDI clips are not indexed.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -218,6 +220,10 @@ export async function handleTimelineTool(
 /**
  * Exports session info from Pro Tools and parses the timeline data.
  * This builds an in-memory cache of tracks and clips with their timeline positions.
+ *
+ * LIMITATION: The PTSL ExportSessionInfoAsText command only exports audio track EDLs.
+ * MIDI clips are not included in the export and therefore cannot be indexed.
+ * This is a limitation of the Pro Tools Scripting Library API.
  */
 export async function refreshProToolsIndex(client: PTSLClient) {
   try {
@@ -233,7 +239,7 @@ export async function refreshProToolsIndex(client: PTSLClient) {
       include_clip_list: false,
       include_markers: false,
       include_plugin_list: false,
-      include_track_edls: true,  // This gives us the timeline map
+      include_track_edls: true,  // This gives us the timeline map (audio only)
       show_sub_frames: false,
       include_user_timestamps: false,
       track_list_type: 'TListType_AllTracks',
@@ -278,13 +284,16 @@ export async function refreshProToolsIndex(client: PTSLClient) {
       // Ignore errors if file doesn't exist
     });
 
+    const audioTrackCount = parsedData.tracks.length;
+    const totalClips = parsedData.tracks.reduce((sum, t) => sum + t.clips.length, 0);
+
     return {
       content: [
         {
           type: 'text',
           text: `Timeline index refreshed successfully.\n\n` +
-                `Found ${parsedData.tracks.length} tracks with a total of ` +
-                `${parsedData.tracks.reduce((sum, t) => sum + t.clips.length, 0)} clips.\n\n` +
+                `Found ${audioTrackCount} audio tracks with a total of ${totalClips} clips.\n\n` +
+                `**Note:** MIDI clips are not included due to PTSL API limitations.\n\n` +
                 `Last sync: ${sessionCache.lastSync?.toISOString()}`,
         },
       ],

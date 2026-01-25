@@ -9,7 +9,7 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 The server provides AI assistants with the following capabilities:
 
 - **Session Management** - Query session info, save sessions, get comprehensive session overview
-- **Timeline Navigation** - Browse tracks and clips with pagination, search by name, navigate the timeline
+- **Timeline Navigation** - Browse tracks and clips with pagination, search by name, navigate the timeline (audio clips only)
 - **Track Control** - List, select, mute, solo, and manage tracks
 - **Clip Management** - Find and work with audio clips on the timeline
 - **Editing Operations** - Cut, copy, paste, clear, undo/redo with timeline selections
@@ -18,6 +18,10 @@ The server provides AI assistants with the following capabilities:
 - **Visual Analysis** - Generate waveform images and analyze audio content (onsets, peaks, silence detection)
 - **Raw PTSL Access** - Send custom PTSL commands for advanced use cases
 - **Diagnostics** - Test and verify PTSL connection status
+
+### Known Limitations
+
+- **MIDI Clips**: The timeline indexing only captures audio clips. MIDI clip positions cannot be queried due to PTSL API limitations. MIDI clips can be seen in the clip list but their timeline positions are not available.
 
 ## ⚠️ Legal Notice
 
