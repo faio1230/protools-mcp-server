@@ -2,7 +2,22 @@
 
 An MCP (Model Context Protocol) server that enables AI assistants like Claude to control Pro Tools via the PTSL (Pro Tools Scripting Library) gRPC API.
 
-Note that this is experimental and incomplete but is fun to experiment with!
+> ⚠️ **Experimental Project:** This is a work in progress and not all Pro Tools features are implemented yet. Use at your own risk!
+
+## Features
+
+The server provides AI assistants with the following capabilities:
+
+- **Session Management** - Query session info, save sessions, get comprehensive session overview
+- **Timeline Navigation** - Browse tracks and clips with pagination, search by name, navigate the timeline
+- **Track Control** - List, select, mute, solo, and manage tracks
+- **Clip Management** - Find and work with audio clips on the timeline
+- **Editing Operations** - Cut, copy, paste, clear, undo/redo with timeline selections
+- **Markers** - Create, list, and navigate session markers
+- **Transport Control** - Play, stop, record, and control playback
+- **Visual Analysis** - Generate waveform images and analyze audio content (onsets, peaks, silence detection)
+- **Raw PTSL Access** - Send custom PTSL commands for advanced use cases
+- **Diagnostics** - Test and verify PTSL connection status
 
 ## ⚠️ Legal Notice
 
