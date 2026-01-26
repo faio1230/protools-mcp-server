@@ -117,24 +117,17 @@ Generates a frequency spectrum visualization showing frequency content over time
 ![Example waveform](https://raw.githubusercontent.com/skrul/protools-mcp-server/main/docs/images/example_spectrogram.png)
 
 #### 3. Peak/RMS Analysis
-Extracts numerical amplitude data at regular intervals throughout the audio.
+Provides overall amplitude statistics for the selected audio region.
 
-**Use cases**: Finding loudest/quietest sections, checking levels, identifying dynamics
+**Use cases**: Checking overall levels, understanding average loudness, verifying headroom
 
 **Example peak analysis output**:
 ```
-**Peak/RMS Analysis**
+**Overall Audio Statistics:**
+RMS Level: -27.46 dB
+Peak Level: -12.09 dB
 
-Mode: isolated (track: Kick)
-Time range: 00:00:00:00 - 00:00:05:00
-Sample points: 143
-
-**Peak Data:**
-00:00:00:00 (sample 0): -12.34 dB
-00:00:00:03 (sample 144): -8.45 dB
-00:00:00:06 (sample 288): -15.67 dB
-00:00:00:09 (sample 432): -6.23 dB
-...
+This represents the average loudness (RMS) and maximum peak across the entire selected region.
 ```
 
 #### 4. Event/Onset Detection
