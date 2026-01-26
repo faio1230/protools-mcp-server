@@ -9,15 +9,16 @@ import os from 'os';
 const execAsync = promisify(exec);
 
 /**
- * Visual analysis MCP tools
+ * Audio analysis MCP tools
  */
 
-export const visualTools = [
+export const analyzeTools = [
   {
-    name: 'get_visual_analysis',
+    name: 'analyze_audio',
     description:
-      'Analyze a specific audio region from Pro Tools. Supports visual analysis (waveform/spectrogram) ' +
-      'or raw audio file delivery. Visual analysis requires ffmpeg. Audio mode is limited to 10 seconds ' +
+      'Analyze a specific audio region from Pro Tools. Supports visual analysis (waveform/spectrogram), ' +
+      'textual analysis (peaks/RMS, event detection, silence detection), or raw audio file delivery. ' +
+      'Visual and textual analysis require ffmpeg and/or aubio. Audio mode is limited to 10 seconds ' +
       'to stay within MCP message size limits. Use "isolated" mode to analyze a single track, or "mix" ' +
       'mode to analyze the full mix.',
     inputSchema: {
@@ -71,14 +72,14 @@ export const visualTools = [
   },
 ];
 
-export async function handleVisualTool(
+export async function handleAnalyzeTool(
   toolName: string,
   args: any,
   client: PTSLClient
 ): Promise<any> {
   switch (toolName) {
-    case 'get_visual_analysis':
-      return await getVisualAnalysis(
+    case 'analyze_audio':
+      return await analyzeAudio(
         client,
         args.track_name,
         args.start_time,
@@ -89,12 +90,12 @@ export async function handleVisualTool(
         args.silence_min_duration
       );
     default:
-      throw new Error(`Unknown visual tool: ${toolName}`);
+      throw new Error(`Unknown analyze tool: ${toolName}`);
   }
 }
 
 /**
- * Generate visual analysis of audio region
+ * Analyze audio region from Pro Tools
  */
 /**
  * Parse timecode string to seconds
@@ -113,7 +114,7 @@ function timecodeToSeconds(timecode: string, fps: number = 30): number {
   return hours * 3600 + minutes * 60 + seconds + (frames / fps);
 }
 
-async function getVisualAnalysis(
+async function analyzeAudio(
   client: PTSLClient,
   trackName: string | undefined,
   startTime: string,
@@ -461,64 +462,78 @@ async function analyzePeaks(
       };
     }
 
-    // Use ffmpeg astats filter to get peak and RMS values
-    // Sample the audio at regular intervals (e.g., every 0.1 seconds)
-    const { stdout } = await execAsync(
-      `ffmpeg -i "${wavPath}" -af "astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:file=-" -f null - 2>&1`
+    // Use ffmpeg astats filter to get overall statistics
+    // This provides a summary at the end of processing
+    const { stdout, stderr } = await execAsync(
+      `ffmpeg -i "${wavPath}" -af "astats=measure_overall=Peak_level+RMS_level:measure_perchannel=0" -f null - 2>&1`
     );
 
-    // Parse the output to extract RMS values
-    const lines = stdout.split('\n');
-    const peaks: Array<{ time: string; rms_db: number; samples: number }> = [];
+    // Combine stdout and stderr since ffmpeg outputs to stderr
+    const output = stdout + '\n' + stderr;
+    const lines = output.split('\n');
 
+    const peaks: Array<{ time: string; rms_db: number; samples: number }> = [];
     const startSeconds = timecodeToSeconds(startTime);
     const sampleRate = 48000; // Pro Tools export sample rate
 
+    // Parse the astats output which appears at the end
+    // Look for lines like: "RMS level dB: -23.45"
+    let overallRmsDb: number | null = null;
+    let overallPeakDb: number | null = null;
+
     for (const line of lines) {
-      if (line.includes('lavfi.astats.Overall.RMS_level')) {
-        const match = line.match(/pts_time:([\d.]+).*?lavfi\.astats\.Overall\.RMS_level=([-\d.]+)/);
-        if (match) {
-          const timeOffset = parseFloat(match[1]);
-          const rmsDb = parseFloat(match[2]);
-          const absoluteTime = startSeconds + timeOffset;
-          const absoluteSamples = Math.round(absoluteTime * sampleRate);
-
-          // Convert back to timecode, rounding to nearest frame
-          let totalFrames = Math.round(absoluteTime * 30);
-          const hours = Math.floor(totalFrames / (30 * 60 * 60));
-          totalFrames %= (30 * 60 * 60);
-          const minutes = Math.floor(totalFrames / (30 * 60));
-          totalFrames %= (30 * 60);
-          const seconds = Math.floor(totalFrames / 30);
-          const frames = totalFrames % 30;
-          const timecode = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}:${String(frames).padStart(2, '0')}`;
-
-          peaks.push({ time: timecode, rms_db: rmsDb, samples: absoluteSamples });
-        }
+      const rmsMatch = line.match(/RMS level dB:\s+([-\d.]+)/);
+      if (rmsMatch) {
+        overallRmsDb = parseFloat(rmsMatch[1]);
       }
+
+      const peakMatch = line.match(/Peak level dB:\s+([-\d.]+)/);
+      if (peakMatch) {
+        overallPeakDb = parseFloat(peakMatch[1]);
+      }
+    }
+
+    // Create a single data point representing the overall audio
+    if (overallRmsDb !== null) {
+      const midSeconds = startSeconds + (timecodeToSeconds(endTime) - startSeconds) / 2;
+      const midSamples = Math.round(midSeconds * sampleRate);
+
+      // Convert to timecode
+      let totalFrames = Math.round(midSeconds * 30);
+      const hours = Math.floor(totalFrames / (30 * 60 * 60));
+      totalFrames %= (30 * 60 * 60);
+      const minutes = Math.floor(totalFrames / (30 * 60));
+      totalFrames %= (30 * 60);
+      const seconds = Math.floor(totalFrames / 30);
+      const frames = totalFrames % 30;
+      const timecode = `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}:${String(frames).padStart(2, '0')}`;
+
+      peaks.push({
+        time: timecode,
+        rms_db: overallRmsDb,
+        samples: midSamples,
+        peak_db: overallPeakDb
+      } as any);
     }
 
     // Format output
     let text = `**Peak/RMS Analysis**\n\n`;
     text += `Mode: ${mode}${mode === 'isolated' ? ` (track: ${trackName})` : ''}\n`;
-    text += `Time range: ${startTime} - ${endTime}\n`;
-    text += `Sample points: ${peaks.length}\n\n`;
+    text += `Time range: ${startTime} - ${endTime}\n\n`;
 
-    if (peaks.length > 0) {
-      text += `**Peak Data:**\n`;
-      // Show first 10 and last 10 if there are many
-      const samplesToShow = peaks.length > 20 ? 10 : peaks.length;
-      for (let i = 0; i < samplesToShow; i++) {
-        text += `${peaks[i].time} (sample ${peaks[i].samples.toLocaleString()}): ${peaks[i].rms_db.toFixed(2)} dB\n`;
+    if (peaks.length > 0 && peaks[0]) {
+      text += `**Overall Audio Statistics:**\n`;
+      text += `RMS Level: ${peaks[0].rms_db.toFixed(2)} dB\n`;
+      if ((peaks[0] as any).peak_db !== undefined && (peaks[0] as any).peak_db !== null) {
+        text += `Peak Level: ${(peaks[0] as any).peak_db.toFixed(2)} dB\n`;
       }
-      if (peaks.length > 20) {
-        text += `... (${peaks.length - 20} more samples) ...\n`;
-        for (let i = peaks.length - 10; i < peaks.length; i++) {
-          text += `${peaks[i].time} (sample ${peaks[i].samples.toLocaleString()}): ${peaks[i].rms_db.toFixed(2)} dB\n`;
-        }
-      }
+      text += `\nThis represents the average loudness (RMS) and maximum peak across the entire selected region.\n`;
     } else {
-      text += 'No peak data detected.\n';
+      text += 'No audio data detected in this region.\n';
+      text += '\nPossible causes:\n';
+      text += '- Audio track is muted or has no audio in this time range\n';
+      text += '- Export failed or produced an empty file\n';
+      text += '- ffmpeg could not analyze the audio file\n';
     }
 
     return {

@@ -23,6 +23,255 @@ The server provides AI assistants with the following capabilities:
 
 - **MIDI Clips**: The timeline indexing only captures audio clips. MIDI clip positions cannot be queried due to PTSL API limitations. MIDI clips can be seen in the clip list but their timeline positions are not available.
 
+## Safety Features
+
+The server uses a **granular permission system** to protect your Pro Tools sessions. You can enable specific operations individually or in groups.
+
+### 🔓 Default Mode: Read-Only with Safe Exports (Recommended)
+
+By default, the server is in **read-only mode** but allows audio exports to temp directories for analysis:
+
+- ✅ **Always allowed (read-only operations):**
+  - All read operations (queries, track lists, etc.)
+  - Playback control (play, stop, toggle)
+  - Muting/soloing tracks (reversible UI state)
+  - Setting timeline selections (UI state)
+  - Changing edit tools and modes (UI state)
+  - Copy to clipboard (doesn't modify source)
+  - **Exporting audio to temp directories only** (for analysis - safe)
+
+**Export path protection:**
+By default, exports are only allowed to system temp directories (where audio analysis tools write). This enables Claude to analyze audio without being able to write files anywhere on your system. To enable exports to custom locations, use `ALLOW_WRITES=export`.
+
+**What's blocked by default:**
+- ❌ **memory** - Creating/editing/deleting markers (requires `ALLOW_WRITES=memory`)
+- ❌ **session** - Saving/opening/closing sessions (requires `ALLOW_WRITES=session`)
+- ❌ **clipboard** - Cut, paste, clear operations (requires `ALLOW_WRITES=clipboard`)
+- ❌ **track_structure** - Creating/deleting tracks (requires `ALLOW_WRITES=track_structure`)
+- ❌ **recording** - Recording operations (requires `ALLOW_WRITES=recording`)
+- ❌ **Exporting to arbitrary paths** (requires `ALLOW_WRITES=export`)
+
+### 🎛️ Granular Permissions with ALLOW_WRITES
+
+Enable specific permission groups as needed:
+
+**Claude Desktop:**
+```json
+{
+  "mcpServers": {
+    "protools": {
+      "command": "node",
+      "args": ["/absolute/path/to/protools-mcp-server/dist/index.js"],
+      "env": {
+        "PTSL_PROTO_PATH": "/absolute/path/to/PTSL.proto",
+        "ALLOW_WRITES": "memory,clipboard"
+      }
+    }
+  }
+}
+```
+
+**Command Line:**
+```bash
+# Allow markers and clipboard operations
+ALLOW_WRITES=memory,clipboard PTSL_PROTO_PATH=/path/to/PTSL.proto node dist/index.js
+
+# Allow everything
+ALLOW_WRITES=all PTSL_PROTO_PATH=/path/to/PTSL.proto node dist/index.js
+
+# Read-only mode (no writes at all)
+ALLOW_WRITES= PTSL_PROTO_PATH=/path/to/PTSL.proto node dist/index.js
+```
+
+### Available Permission Groups
+
+| Group | What It Controls | Risk Level | Default |
+|-------|------------------|------------|---------|
+| **memory** | Create/edit/delete markers | 🟢 Safe - Annotations only | ❌ Blocked |
+| **export** | Export audio to ANY location | 🟡 Moderate - File system writes | ❌ Blocked |
+| **clipboard** | Cut/paste/clear audio | 🟠 Destructive - Can lose audio | ❌ Blocked |
+| **track_structure** | Create/delete tracks | 🟠 Destructive - Structural changes | ❌ Blocked |
+| **session** | Save/open/close sessions | 🔴 High risk - Permanent file changes | ❌ Blocked |
+| **recording** | Record audio | 🔴 High risk - Can overwrite | ❌ Blocked |
+
+**Note:** The following operations are always allowed (don't require permission groups):
+- Read operations (queries, track lists, clip info, etc.)
+- Playback control (play, stop, toggle)
+- Mute/solo/record-enable tracks (reversible UI state)
+- Timeline selection (UI state)
+- Edit tools and playback modes (UI state)
+- Copy to clipboard (read-only operation)
+- **Export to temp directory only** (temp dir: `/tmp` or similar - enables audio analysis)
+
+### Common Configuration Examples
+
+**Safe exploration (default - read-only with temp exports):**
+```bash
+# No ALLOW_WRITES needed - read-only mode
+# Exports to temp directory allowed for audio analysis
+# Mute/solo, timeline selection, edit tools always allowed
+PTSL_PROTO_PATH=/path/to/PTSL.proto node dist/index.js
+```
+
+**Allow Claude to add markers:**
+```bash
+ALLOW_WRITES=memory PTSL_PROTO_PATH=/path/to/PTSL.proto node dist/index.js
+```
+
+**Allow exports to any location:**
+```bash
+ALLOW_WRITES=export PTSL_PROTO_PATH=/path/to/PTSL.proto node dist/index.js
+```
+
+**Allow editing but not saving:**
+```bash
+ALLOW_WRITES=memory,clipboard PTSL_PROTO_PATH=/path/to/PTSL.proto node dist/index.js
+```
+
+**Full control (use with caution):**
+```bash
+ALLOW_WRITES=all PTSL_PROTO_PATH=/path/to/PTSL.proto node dist/index.js
+```
+
+**Read-only mode (maximum safety):**
+```bash
+ALLOW_WRITES= PTSL_PROTO_PATH=/path/to/PTSL.proto node dist/index.js
+```
+
+> ⚠️ **Recommendation:** Start with the default mode to explore safely. Enable additional permission groups only as needed. The granular system lets you give Claude exactly the access it needs without unnecessary risk.
+
+## Audio Analysis for AI
+
+Since AI models like Claude cannot directly listen to audio, this server provides several methods to help the AI "understand" audio content through visual and textual analysis. The `analyze_audio` tool can bounce any region of your Pro Tools session and analyze it in multiple ways:
+
+### Analysis Modes
+
+**Isolated Mode**: Analyzes a single track by soloing it, bouncing the region, and generating analysis. Perfect for examining individual instruments or vocals.
+
+**Mix Mode**: Analyzes the full mix as it currently sounds in Pro Tools, respecting all mute/solo states, automation, and plugin processing.
+
+### Analysis Types
+
+#### 1. Waveform Visualization
+Generates a high-resolution waveform image with amplitude over time. The visualization includes:
+- Stereo channels displayed separately (top/bottom)
+- Time markers in Pro Tools timecode format (HH:MM:SS:FF)
+- Amplitude scale in dB (-24dB to 0dB reference)
+- Grid lines for visual orientation
+
+**Use cases**: Identifying clip boundaries, seeing dynamics, spotting silence or loud sections, understanding rhythm patterns
+
+**Example waveform output** (4096x2048 pixels):
+```
+Black waveform on white background with:
+- Top channel: Left audio
+- Bottom channel: Right audio
+- Time labels across top: 00:00:00:00, 00:00:01:00, 00:00:02:00...
+- Amplitude labels on left: 0dB, -6dB, -12dB, -18dB, -24dB
+```
+
+#### 2. Spectrogram Visualization
+Generates a frequency spectrum visualization showing frequency content over time. Colors represent amplitude at each frequency.
+
+**Use cases**: Identifying frequency ranges, spotting harmonics, seeing tonal vs percussive content, detecting resonances
+
+**Example spectrogram output** (2048x1024 pixels):
+```
+Frequency (vertical, 0-24kHz) vs Time (horizontal)
+- Brighter colors = louder frequencies
+- Vertical lines = transients/hits
+- Horizontal bands = sustained tones
+```
+
+#### 3. Peak/RMS Analysis
+Extracts numerical amplitude data at regular intervals throughout the audio.
+
+**Use cases**: Finding loudest/quietest sections, checking levels, identifying dynamics
+
+**Example peak analysis output**:
+```
+**Peak/RMS Analysis**
+
+Mode: isolated (track: Kick)
+Time range: 00:00:00:00 - 00:00:05:00
+Sample points: 143
+
+**Peak Data:**
+00:00:00:00 (sample 0): -12.34 dB
+00:00:00:03 (sample 144): -8.45 dB
+00:00:00:06 (sample 288): -15.67 dB
+00:00:00:09 (sample 432): -6.23 dB
+...
+```
+
+#### 4. Event/Onset Detection
+Uses the Aubio library to detect transients and rhythmic events (drum hits, note attacks, etc.).
+
+**Use cases**: Finding hit points for editing, understanding rhythm, identifying beats for marker placement
+
+**Example event detection output**:
+```
+**Event/Onset Analysis**
+
+Mode: mix
+Time range: 00:00:10:00 - 00:00:15:00
+Detected events: 24
+
+**Onset Times:**
+1. 00:00:10:02 (sample 480,960)
+2. 00:00:10:17 (sample 488,160)
+3. 00:00:11:02 (sample 495,360)
+4. 00:00:11:17 (sample 502,560)
+...
+```
+
+#### 5. Silence Detection
+Detects periods of silence or low-level audio based on configurable threshold and duration.
+
+**Use cases**: Finding gaps between takes, identifying cleanup opportunities, detecting section boundaries
+
+**Parameters**:
+- `silence_threshold_db`: Amplitude threshold (default: -40dB)
+- `silence_min_duration`: Minimum duration in seconds (default: 0.3s)
+
+**Example silence detection output**:
+```
+**Silence Analysis**
+
+Mode: isolated (track: Verse Lead Vocal)
+Time range: 00:00:00:00 - 00:01:00:00
+Threshold: -40dB, Min duration: 0.3s
+Silent periods detected: 8
+
+**Silent Periods:**
+1. 00:00:05:12 - 00:00:08:23 (3.37s)
+   Samples: 259,200 - 421,440
+2. 00:00:19:04 - 00:00:20:15 (1.50s)
+   Samples: 915,840 - 988,800
+...
+```
+
+#### 6. Combined Analysis
+Runs all available text-based analyses (peaks, events, and silence) in one operation, providing a comprehensive overview of the audio content.
+
+**Use cases**: Initial exploration of unfamiliar audio, getting complete context before making editing decisions
+
+#### 7. Raw Audio Delivery
+Bounces a region to WAV format and returns it as base64-encoded data (limited to 10 seconds due to MCP message size limits).
+
+**Use cases**: Archival, external processing, or future use with audio-capable AI models
+
+**Note**: Claude and most current AI models cannot directly analyze audio files. This mode is included for future compatibility and external tool integration.
+
+### Requirements
+
+- **ffmpeg**: Required for waveform, spectrogram, peaks, and silence detection
+  - Install: `brew install ffmpeg` (macOS) or `apt-get install ffmpeg` (Linux)
+- **aubio**: Required for event/onset detection
+  - Install: `brew install aubio` (macOS) or `apt-get install aubio` (Linux)
+
+The server will automatically detect which tools are available and provide appropriate error messages if required dependencies are missing.
+
 ## ⚠️ Legal Notice
 
 **This project does NOT include the PTSL.proto file from Avid's SDK.**
@@ -47,10 +296,45 @@ According to Avid's documentation, the PTSL server should be automatically avail
 
 **Note:** Make sure Pro Tools is actually running before attempting to connect!
 
+## Quick Start
+
+Get up and running in 5 minutes:
+
+1. **Get the PTSL SDK** - Download from Avid and extract `PTSL.proto`
+2. **Clone and build**:
+   ```bash
+   git clone <repository-url>
+   cd protools-mcp-server
+   npm install
+   npm run build
+   ```
+3. **Test the connection**:
+   ```bash
+   npm run test-cli -- /path/to/PTSL.proto
+   ```
+4. **Configure Claude Desktop** - Add to `claude_desktop_config.json`:
+   ```json
+   {
+     "mcpServers": {
+       "protools": {
+         "command": "node",
+         "args": ["/absolute/path/to/protools-mcp-server/dist/index.js"],
+         "env": {
+           "PTSL_PROTO_PATH": "/absolute/path/to/PTSL.proto"
+         }
+       }
+     }
+   }
+   ```
+5. **Restart Claude Desktop** and start using Pro Tools with AI!
+
+**Note:** The server starts in read-only mode by default, which prevents any modifications to your session. This is perfect for exploring and learning. See the [Safety Features](#safety-features) section to enable write operations when ready.
+
 ## Installation
 
 ```bash
 npm install
+npm run build
 ```
 
 ## Testing the Connection
@@ -141,19 +425,94 @@ PORT=3443 PTSL_PROTO_PATH=/path/to/PTSL.proto npm run start:http
 # Then use: https://localhost:3443/sse
 ```
 
+## Example Use Cases
+
+Here are some things you can ask Claude to do with your Pro Tools session:
+
+**Analysis & Navigation:**
+- "Show me a waveform of the vocal track from 1 minute to 1:30"
+- "Find all the silent parts in the lead vocal track longer than 1 second"
+- "Where are the drum hits in the kick track between bars 8 and 16?"
+- "What clips are on the timeline between 30 seconds and 1 minute?"
+
+**Editing & Organization:**
+- "Create markers at every vocal phrase in the lead vocal track"
+- "Find the clip named 'Guitar Solo 3' and select it"
+- "Mute all the drum tracks"
+- "Copy the selection and paste it at 2 minutes"
+
+**Session Management:**
+- "What's the current session name and sample rate?"
+- "List all the tracks in my session"
+- "Save the session"
+
+**Playback Control:**
+- "Play from 1 minute to 1:30"
+- "Stop playback"
+- "Start recording"
+
 ## Available Tools
 
-The MCP server provides these tools:
+The MCP server provides 36 tools across multiple categories:
 
 ### Session Management
 - **get_session_info** - Get current session name, path, and sample rate
+- **get_session_length** - Get total session duration
+- **get_session_overview** - Comprehensive session information
 - **save_session** - Save the current session
 
 ### Track Management
 - **get_track_list** - List all tracks with their properties
-- **select_tracks** - Select tracks by name
+- **select_tracks** - Select tracks by name or pattern
 - **set_track_mute** - Mute/unmute tracks
 - **set_track_solo** - Solo/unsolo tracks
+
+### Timeline & Clips
+- **refresh_pro_tools_index** - Sync timeline cache with Pro Tools session
+- **get_timeline_tracks** - Browse tracks with pagination
+- **get_timeline_clips** - Browse clips with pagination
+- **search_timeline** - Search for tracks/clips by name
+- **get_clip_list** - List clips in the clip bin
+- **select_clip_on_timeline** - Select a specific clip on the timeline
+- **get_timeline_selection** - Get current timeline selection range
+- **set_timeline_selection** - Set timeline selection to specific time range
+
+### Transport Control
+- **play** - Start playback
+- **stop** - Stop playback/recording
+- **toggle_play** - Toggle play/stop
+- **record** - Start recording
+- **set_playback_mode** - Configure loop/dynamic transport mode
+
+### Editing Operations
+- **cut** - Cut selected audio
+- **copy** - Copy selected audio
+- **paste** - Paste from clipboard
+- **clear** - Clear/delete selected audio
+- **undo** - Undo last operation
+- **redo** - Redo last undone operation
+
+### Markers
+- **get_markers** - List all memory locations/markers
+- **create_marker** - Create a new marker at specified time
+- **edit_marker** - Modify existing marker name/time
+- **delete_marker** - Delete a specific marker
+- **delete_all_markers** - Remove all markers
+- **select_marker** - Navigate to and select a marker
+
+### Audio Analysis
+- **analyze_audio** - Analyze audio regions with multiple analysis types:
+  - Waveform visualization
+  - Spectrogram (frequency analysis)
+  - Peak/RMS amplitude data
+  - Event/onset detection (requires aubio)
+  - Silence detection
+  - Combined analysis
+  - Raw audio delivery
+
+### Advanced/Diagnostics
+- **ptsl_command** - Send raw PTSL commands directly
+- **sample_ptsl_responses** - View example PTSL API responses
 
 ## Development
 
@@ -171,6 +530,10 @@ npm run test-cli -- /path/to/PTSL.proto
 export PTSL_PROTO_PATH=/path/to/PTSL.proto
 ./test-mcp.sh
 ./test-tools.sh
+
+# Test write protection safety mechanism
+node test-write-protection.js                           # Test read-only mode
+ALLOW_WRITE_OPERATIONS=true node test-write-protection.js  # Test with writes enabled
 ```
 
 ## Project Structure
@@ -204,6 +567,34 @@ Pro Tools PTSL Server (localhost:31416)
 Pro Tools Application
 ```
 
+## Project Status & Roadmap
+
+### What Works Well
+- ✅ Basic session management (info, save, navigation)
+- ✅ Track control (list, select, mute, solo)
+- ✅ Timeline navigation and search (audio clips only)
+- ✅ Transport control (play, stop, record)
+- ✅ Basic editing operations (cut, copy, paste, clear, undo/redo)
+- ✅ Marker management (create, list, edit, delete, navigate)
+- ✅ Audio analysis (waveforms, spectrograms, peaks, events, silence detection)
+- ✅ Timeline selection management
+
+### Known Issues & Limitations
+- ⚠️ MIDI clip timeline positions cannot be indexed (PTSL API limitation)
+- ⚠️ Some advanced Pro Tools features not yet exposed via PTSL
+- ⚠️ Audio analysis requires external dependencies (ffmpeg, aubio)
+- ⚠️ Raw audio delivery limited to 10 seconds due to MCP message size constraints
+
+### Potential Future Enhancements
+- 🔮 Plugin parameter control
+- 🔮 Automation read/write
+- 🔮 Send/aux routing management
+- 🔮 I/O configuration
+- 🔮 Mixer snapshots
+- 🔮 Batch processing operations
+- 🔮 Session template creation
+- 🔮 Extended MIDI support (if PTSL API expands)
+
 ## Troubleshooting
 
 ### "Failed to connect to PTSL server"
@@ -229,6 +620,42 @@ Pro Tools Application
 - The proto file should match your Pro Tools version
 - Download the latest SDK from Avid if needed
 
+## Contributing
+
+Contributions are welcome! Here's how you can help:
+
+### Reporting Issues
+- Use GitHub Issues to report bugs or request features
+- Include Pro Tools version, PTSL SDK version, and OS details
+- Provide session details if reporting behavior issues
+- Include error messages and logs when applicable
+
+### Contributing Code
+1. Fork the repository
+2. Create a feature branch (`git checkout -b feature/amazing-feature`)
+3. Make your changes and test thoroughly
+4. Follow the existing code style (TypeScript, ESLint)
+5. Update documentation as needed
+6. Commit your changes (`git commit -m 'Add amazing feature'`)
+7. Push to your branch (`git push origin feature/amazing-feature`)
+8. Open a Pull Request
+
+### Development Guidelines
+- All new tools should follow the existing tool structure in `src/tools/`
+- Add appropriate error handling and validation
+- Include JSDoc comments for public APIs
+- Test with a real Pro Tools session when possible
+- Update the README if adding new capabilities
+
+### Testing
+Before submitting a PR, ensure:
+```bash
+npm run build          # Build succeeds
+npm run test-cli       # PTSL connection works
+./test-mcp.sh          # MCP server initializes
+./test-tools.sh        # Tool registration works
+```
+
 ## License
 
 MIT License - see LICENSE file
@@ -236,3 +663,11 @@ MIT License - see LICENSE file
 ## Acknowledgments
 
 Pro Tools and PTSL are trademarks of Avid Technology, Inc. This is an independent open-source project and is not affiliated with or endorsed by Avid.
+
+## Support & Community
+
+- **Issues**: Report bugs and request features via [GitHub Issues](https://github.com/yourusername/protools-mcp-server/issues)
+- **Discussions**: Ask questions and share workflows in [GitHub Discussions](https://github.com/yourusername/protools-mcp-server/discussions)
+- **PTSL Documentation**: Refer to Avid's official PTSL documentation from the SDK
+
+This project is experimental and community-driven. Help make it better by contributing code, reporting issues, or sharing your use cases!

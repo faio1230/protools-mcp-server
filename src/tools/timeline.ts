@@ -55,10 +55,10 @@ export const timelineTools = [
   {
     name: 'get_timeline_clips',
     description:
-      'Get a paginated list of clips from the locally cached timeline index. ' +
-      'Allows exploring all clips in the session without prior knowledge. ' +
+      'Get clips CURRENTLY PLACED ON THE TIMELINE with their timeline positions and durations. ' +
+      'Use this when you want to see what audio is actually in the session timeline. ' +
       'Returns clips sorted by timeline position with pagination support. ' +
-      'Does not communicate with Pro Tools directly.',
+      'For the clip library/media pool (available but not necessarily on timeline), use get_clip_list instead.',
     inputSchema: {
       type: 'object',
       properties: {
@@ -89,8 +89,8 @@ export const timelineTools = [
     name: 'search_timeline',
     description:
       'Fast search of the locally cached timeline index. Queries audio clip names and track names. ' +
-      'Does not communicate with Pro Tools directly. If a search yields no results for a clip the user says exists, ' +
-      'suggest calling refresh_pro_tools_index to update the cache. ' +
+      'If no results are found, automatically re-indexes the timeline from Pro Tools and retries the search. ' +
+      'This ensures you always get the most up-to-date results without manual re-indexing. ' +
       'LIMITATION: Only searches audio clips - MIDI clips are not indexed.',
     inputSchema: {
       type: 'object',
@@ -231,7 +231,7 @@ export async function refreshProToolsIndex(client: PTSLClient) {
     const tmpDir = os.tmpdir();
     const exportPath = path.join(tmpDir, `pt_export_${Date.now()}.txt`);
 
-    console.log(`Exporting session info to: ${exportPath}`);
+    console.error(`Exporting session info to: ${exportPath}`);
 
     // Call ExportSessionInfoAsText
     const response = await client.sendRequest(CommandId.ExportSessionInfoAsText, {
@@ -543,6 +543,7 @@ async function getTimelineClips(args: any, client?: PTSLClient) {
 
 /**
  * Searches the cached timeline data for clips, tracks, or markers.
+ * Automatically re-indexes if no results are found and retries the search.
  */
 async function searchTimeline(query: string, scope: string = 'all', client?: PTSLClient) {
   try {
@@ -563,62 +564,89 @@ async function searchTimeline(query: string, scope: string = 'all', client?: PTS
       };
     }
 
-    const results: any = {
-      query,
-      scope,
-      tracks: [],
-      clips: [],
-    };
+    // Helper function to perform the search
+    const performSearch = () => {
+      const results: any = {
+        query,
+        scope,
+        tracks: [],
+        clips: [],
+      };
 
-    const lowerQuery = query.toLowerCase();
+      const lowerQuery = query.toLowerCase();
 
-    // Search tracks
-    if (scope === 'tracks' || scope === 'all') {
-      results.tracks = sessionCache.tracks.filter(track =>
-        track.name.toLowerCase().includes(lowerQuery)
-      ).map(track => ({
-        name: track.name,
-        type: track.type,
-        clipCount: track.clips.length,
-      }));
-    }
+      // Search tracks
+      if (scope === 'tracks' || scope === 'all') {
+        results.tracks = sessionCache.tracks.filter(track =>
+          track.name.toLowerCase().includes(lowerQuery)
+        ).map(track => ({
+          name: track.name,
+          type: track.type,
+          clipCount: track.clips.length,
+        }));
+      }
 
-    // Search clips
-    if (scope === 'clips' || scope === 'all') {
-      for (const track of sessionCache.tracks) {
-        const matchingClips = track.clips.filter(clip =>
-          clip.name.toLowerCase().includes(lowerQuery)
-        );
+      // Search clips
+      if (scope === 'clips' || scope === 'all') {
+        for (const track of sessionCache.tracks) {
+          const matchingClips = track.clips.filter(clip =>
+            clip.name.toLowerCase().includes(lowerQuery)
+          );
 
-        for (const clip of matchingClips) {
-          results.clips.push({
-            clipName: clip.name,
-            trackName: track.name,
-            startTime: clip.startTime,
-            endTime: clip.endTime,
-            duration: clip.duration,
-          });
+          for (const clip of matchingClips) {
+            results.clips.push({
+              clipName: clip.name,
+              trackName: track.name,
+              startTime: clip.startTime,
+              endTime: clip.endTime,
+              duration: clip.duration,
+            });
+          }
         }
       }
+
+      return results;
+    };
+
+    // First search attempt
+    let results = performSearch();
+    let totalResults = results.tracks.length + results.clips.length;
+    let reindexed = false;
+
+    // If no results found and client is available, re-index and try again
+    if (totalResults === 0 && client) {
+      console.error(`No results found for "${query}", re-indexing timeline...`);
+      await refreshProToolsIndex(client);
+      reindexed = true;
+
+      // Retry search after re-indexing
+      results = performSearch();
+      totalResults = results.tracks.length + results.clips.length;
     }
 
-    const totalResults = results.tracks.length + results.clips.length;
-
+    // Still no results after re-indexing
     if (totalResults === 0) {
+      const reindexMsg = reindexed
+        ? 'Timeline was re-indexed but still no matches found.'
+        : 'No results found.';
+
       return {
         content: [
           {
             type: 'text',
-            text: `No results found for query: "${query}"\n\n` +
-                  `If you expected results, the timeline index may be stale. ` +
-                  `Consider calling refresh_pro_tools_index if clips were recently added or moved.`,
+            text: `No results found for query: "${query}"\n\n${reindexMsg}`,
           },
         ],
       };
     }
 
     // Format results
-    let resultText = `Found ${totalResults} results for query: "${query}"\n\n`;
+    let resultText = `Found ${totalResults} results for query: "${query}"`;
+
+    if (reindexed) {
+      resultText += ` (after re-indexing timeline)`;
+    }
+    resultText += '\n\n';
 
     if (results.tracks.length > 0) {
       resultText += `**Tracks (${results.tracks.length}):**\n`;
@@ -672,7 +700,7 @@ async function selectClipOnTimeline(
 ) {
   try {
     // Step 1: Set edit tool to Selector
-    console.log('Setting edit tool to Selector...');
+    console.error('Setting edit tool to Selector...');
     const toolResponse = await client.sendRequest(CommandId.SetEditTool, {
       edit_tool: 'ET_Selector',
     });
@@ -694,7 +722,7 @@ async function selectClipOnTimeline(
     }
 
     // Step 2: Select the track
-    console.log(`Selecting track: ${trackName}...`);
+    console.error(`Selecting track: ${trackName}...`);
     const selectTrackResponse = await client.sendRequest(CommandId.SelectTracksByName, {
       track_names: [trackName],
     });
@@ -716,7 +744,7 @@ async function selectClipOnTimeline(
     }
 
     // Step 3: Set timeline selection to the clip range
-    console.log(`Setting timeline selection: ${startTime} to ${endTime}...`);
+    console.error(`Setting timeline selection: ${startTime} to ${endTime}...`);
     const timelineResponse = await client.sendRequest(CommandId.SetTimelineSelection, {
       in_time: startTime,
       out_time: endTime,

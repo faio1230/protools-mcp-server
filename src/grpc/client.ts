@@ -1,6 +1,14 @@
 import * as grpc from '@grpc/grpc-js';
 import * as protoLoader from '@grpc/proto-loader';
-import { CommandId } from './commands.js';
+import * as os from 'os';
+import * as path from 'path';
+import {
+  CommandId,
+  PermissionGroup,
+  getCommandPermissionGroup,
+  isReadOnlyCommand,
+  isExportCommand
+} from './commands.js';
 
 /**
  * PTSL gRPC client wrapper
@@ -13,10 +21,64 @@ export class PTSLClient {
   private client: any;
   private sessionId: string = '';
   private connected: boolean = false;
+  private allowedPermissionGroups: Set<PermissionGroup>;
 
   constructor(protoPath: string, serverAddress: string = 'localhost:31416') {
     this.protoPath = protoPath;
     this.serverAddress = serverAddress;
+
+    // Parse ALLOW_WRITES environment variable
+    this.allowedPermissionGroups = this.parseAllowedPermissions();
+
+    // Display permission level
+    this.displayPermissionStatus();
+  }
+
+  /**
+   * Parse ALLOW_WRITES environment variable into permission groups
+   */
+  private parseAllowedPermissions(): Set<PermissionGroup> {
+    const allowed = new Set<PermissionGroup>();
+
+    const allowWrites = process.env.ALLOW_WRITES || '';
+
+    if (allowWrites === 'all') {
+      // Allow all permission groups
+      return new Set(Object.values(PermissionGroup));
+    }
+
+    if (allowWrites === '') {
+      // Default: no permission groups enabled (read-only mode)
+      // Exports to temp directories are allowed as a special case in checkCommandPermission
+      return allowed;
+    }
+
+    // Parse comma-separated list of permission groups
+    const groups = allowWrites.split(',').map(g => g.trim());
+    for (const group of groups) {
+      if (Object.values(PermissionGroup).includes(group as PermissionGroup)) {
+        allowed.add(group as PermissionGroup);
+      } else {
+        console.error(`⚠️  Warning: Unknown permission group '${group}' in ALLOW_WRITES`);
+      }
+    }
+
+    return allowed;
+  }
+
+  /**
+   * Display current permission status
+   */
+  private displayPermissionStatus(): void {
+    const groupNames = Array.from(this.allowedPermissionGroups).sort();
+
+    if (groupNames.length === Object.values(PermissionGroup).length) {
+      console.error('⚠️  ALL OPERATIONS ENABLED - All permission groups allowed');
+    } else if (groupNames.length === 0) {
+      console.error('🔒 READ-ONLY MODE - Only queries and playback allowed');
+    } else {
+      console.error(`🔓 GRANULAR PERMISSIONS - Allowed: ${groupNames.join(', ')}`);
+    }
   }
 
   /**
@@ -79,6 +141,9 @@ export class PTSLClient {
       throw new Error('Not connected to PTSL server. Call connect() first.');
     }
 
+    // Check permissions for this command
+    this.checkCommandPermission(commandId, requestBody);
+
     return new Promise((resolve, reject) => {
       const header: any = {
         command: commandId,  // Note: field is called 'command', not 'command_id'
@@ -135,6 +200,9 @@ export class PTSLClient {
       throw new Error('Not connected to PTSL server. Call connect() first.');
     }
 
+    // Check permissions for this command
+    this.checkCommandPermission(commandId, requestBody);
+
     const request = {
       header: {
         session_id: this.sessionId,
@@ -171,5 +239,105 @@ export class PTSLClient {
    */
   isConnected(): boolean {
     return this.connected;
+  }
+
+  /**
+   * Check if a permission group is allowed
+   */
+  isPermissionGroupAllowed(group: PermissionGroup): boolean {
+    return this.allowedPermissionGroups.has(group);
+  }
+
+  /**
+   * Get list of allowed permission groups
+   */
+  getAllowedPermissionGroups(): string[] {
+    return Array.from(this.allowedPermissionGroups).sort();
+  }
+
+
+  /**
+   * Check if a command is allowed based on permission groups
+   */
+  private checkCommandPermission(commandId: number, requestBody: any = {}): void {
+    // Read-only commands are always allowed
+    if (isReadOnlyCommand(commandId)) {
+      return;
+    }
+
+    // Get the permission group for this command
+    const group = getCommandPermissionGroup(commandId);
+
+    if (!group) {
+      // Unknown command - be conservative and block it
+      throw new Error(
+        `Unknown command ${commandId} - cannot determine permission requirements. ` +
+        'This command is not in any known permission group.'
+      );
+    }
+
+    // Special handling for export commands
+    if (isExportCommand(commandId)) {
+      const exportPath = this.getExportPath(requestBody);
+      const isSafePath = this.isPathInTempDirectory(exportPath);
+
+      if (isSafePath) {
+        // Exports to temp directories are always allowed (for analysis)
+        return;
+      }
+
+      // Non-temp exports require the export permission group
+      if (!this.allowedPermissionGroups.has(PermissionGroup.EXPORT)) {
+        throw new Error(
+          `Export to arbitrary path blocked: Exports are only allowed to temporary directories (${os.tmpdir()}) by default. ` +
+          `Attempted path: ${exportPath}. ` +
+          'To enable exports to any location, set ALLOW_WRITES=export or ALLOW_WRITES=all'
+        );
+      }
+
+      // Export permission granted, allow export to any path
+      return;
+    }
+
+    // Check if this permission group is allowed
+    if (!this.allowedPermissionGroups.has(group)) {
+      const groupName = group;
+      const allowedGroups = this.getAllowedPermissionGroups();
+
+      throw new Error(
+        `Permission denied: This command requires the '${groupName}' permission group. ` +
+        `Currently allowed groups: ${allowedGroups.length > 0 ? allowedGroups.join(', ') : 'none (read-only mode)'}. ` +
+        `To enable this operation, set ALLOW_WRITES=${groupName} or ALLOW_WRITES=all`
+      );
+    }
+  }
+
+  /**
+   * Extract export path from request body
+   */
+  private getExportPath(requestBody: any): string {
+    // Check common export path fields (top-level)
+    if (requestBody.file_location) return requestBody.file_location;
+    if (requestBody.export_file_path) return requestBody.export_file_path;
+    if (requestBody.destination_path) return requestBody.destination_path;
+    if (requestBody.output_path) return requestBody.output_path;
+
+    // Check nested location_info structure (used by ExportMix)
+    if (requestBody.location_info?.directory) return requestBody.location_info.directory;
+
+    return '';
+  }
+
+  /**
+   * Check if a path is within the system temp directory
+   */
+  private isPathInTempDirectory(filePath: string): boolean {
+    if (!filePath) return false;
+
+    const tmpDir = os.tmpdir();
+    const resolvedPath = path.resolve(filePath);
+    const resolvedTmpDir = path.resolve(tmpDir);
+
+    return resolvedPath.startsWith(resolvedTmpDir);
   }
 }

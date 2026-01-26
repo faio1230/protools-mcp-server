@@ -6,7 +6,7 @@ import { clipTools, handleClipTool } from './clips.js';
 import { editingTools, handleEditingTool } from './editing.js';
 import { markerTools, handleMarkerTool } from './markers.js';
 import { timelineTools, handleTimelineTool } from './timeline.js';
-import { visualTools, handleVisualTool } from './visual.js';
+import { analyzeTools, handleAnalyzeTool } from './analyze.js';
 import { rawTools, handleRawTool } from './raw.js';
 import { diagnosticTools, handleDiagnosticTool } from './diagnostic.js';
 
@@ -21,7 +21,7 @@ export const allTools = [
   ...editingTools,
   ...markerTools,
   ...timelineTools,
-  ...visualTools,
+  ...analyzeTools,
   ...rawTools,
   ...diagnosticTools,
 ];
@@ -69,9 +69,9 @@ export async function handleToolCall(
     return await handleTimelineTool(toolName, args, client);
   }
 
-  // Check visual tools
-  if (visualTools.find((t) => t.name === toolName)) {
-    return await handleVisualTool(toolName, args, client);
+  // Check analyze tools
+  if (analyzeTools.find((t) => t.name === toolName)) {
+    return await handleAnalyzeTool(toolName, args, client);
   }
 
   // Check raw tools

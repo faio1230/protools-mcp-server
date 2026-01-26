@@ -8,7 +8,10 @@ import { CommandId } from '../grpc/commands.js';
 export const clipTools = [
   {
     name: 'get_clip_list',
-    description: 'Get a list of all clips in the clip list (audio files imported into session)',
+    description: 'Get the clip library - all imported audio files available in the session. ' +
+      'This is the "clip bin" or media pool, NOT clips currently on the timeline. ' +
+      'Use this ONLY when you need to see what audio files are available to use. ' +
+      'To see clips actually placed on the timeline, use get_timeline_clips instead.',
     inputSchema: {
       type: 'object',
       properties: {},
