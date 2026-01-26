@@ -25,37 +25,30 @@ The server provides AI assistants with the following capabilities:
 
 ## Safety Features
 
-The server uses a **granular permission system** to protect your Pro Tools sessions. You can enable specific operations individually or in groups.
+The server uses a **granular permission system** to protect your Pro Tools sessions. By default, it runs in **read-only mode** with safe audio analysis enabled.
 
-### 🔓 Default Mode: Read-Only with Safe Exports (Recommended)
+### Default Permissions (No Configuration Needed)
 
-By default, the server is in **read-only mode** but allows audio exports to temp directories for analysis:
+**Always allowed:**
+- Read operations (queries, track lists, clip info, session info)
+- Playback control (play, stop, toggle)
+- UI state changes (mute/solo, timeline selection, edit tools)
+- Copy to clipboard (non-destructive)
+- Export audio to temp directories only (enables audio analysis)
 
-- ✅ **Always allowed (read-only operations):**
-  - All read operations (queries, track lists, etc.)
-  - Playback control (play, stop, toggle)
-  - Muting/soloing tracks (reversible UI state)
-  - Setting timeline selections (UI state)
-  - Changing edit tools and modes (UI state)
-  - Copy to clipboard (doesn't modify source)
-  - **Exporting audio to temp directories only** (for analysis - safe)
+**Blocked by default** (require `ALLOW_WRITES` to enable):
+- Creating/editing markers (`memory`)
+- Cut/paste/clear operations (`clipboard`)
+- Exporting to custom paths (`export`)
+- Creating/deleting tracks (`track_structure`)
+- Saving/opening sessions (`session`)
+- Recording (`recording`)
 
-**Export path protection:**
-By default, exports are only allowed to system temp directories (where audio analysis tools write). This enables Claude to analyze audio without being able to write files anywhere on your system. To enable exports to custom locations, use `ALLOW_WRITES=export`.
+### Enabling Write Operations
 
-**What's blocked by default:**
-- ❌ **memory** - Creating/editing/deleting markers (requires `ALLOW_WRITES=memory`)
-- ❌ **session** - Saving/opening/closing sessions (requires `ALLOW_WRITES=session`)
-- ❌ **clipboard** - Cut, paste, clear operations (requires `ALLOW_WRITES=clipboard`)
-- ❌ **track_structure** - Creating/deleting tracks (requires `ALLOW_WRITES=track_structure`)
-- ❌ **recording** - Recording operations (requires `ALLOW_WRITES=recording`)
-- ❌ **Exporting to arbitrary paths** (requires `ALLOW_WRITES=export`)
+Use the `ALLOW_WRITES` environment variable to enable specific permission groups:
 
-### 🎛️ Granular Permissions with ALLOW_WRITES
-
-Enable specific permission groups as needed:
-
-**Claude Desktop:**
+**Claude Desktop** (`~/Library/Application Support/Claude/claude_desktop_config.json`):
 ```json
 {
   "mcpServers": {
@@ -73,72 +66,23 @@ Enable specific permission groups as needed:
 
 **Command Line:**
 ```bash
-# Allow markers and clipboard operations
+# Allow markers and clipboard editing
 ALLOW_WRITES=memory,clipboard PTSL_PROTO_PATH=/path/to/PTSL.proto node dist/index.js
 
-# Allow everything
-ALLOW_WRITES=all PTSL_PROTO_PATH=/path/to/PTSL.proto node dist/index.js
-
-# Read-only mode (no writes at all)
-ALLOW_WRITES= PTSL_PROTO_PATH=/path/to/PTSL.proto node dist/index.js
-```
-
-### Available Permission Groups
-
-| Group | What It Controls | Risk Level | Default |
-|-------|------------------|------------|---------|
-| **memory** | Create/edit/delete markers | 🟢 Safe - Annotations only | ❌ Blocked |
-| **export** | Export audio to ANY location | 🟡 Moderate - File system writes | ❌ Blocked |
-| **clipboard** | Cut/paste/clear audio | 🟠 Destructive - Can lose audio | ❌ Blocked |
-| **track_structure** | Create/delete tracks | 🟠 Destructive - Structural changes | ❌ Blocked |
-| **session** | Save/open/close sessions | 🔴 High risk - Permanent file changes | ❌ Blocked |
-| **recording** | Record audio | 🔴 High risk - Can overwrite | ❌ Blocked |
-
-**Note:** The following operations are always allowed (don't require permission groups):
-- Read operations (queries, track lists, clip info, etc.)
-- Playback control (play, stop, toggle)
-- Mute/solo/record-enable tracks (reversible UI state)
-- Timeline selection (UI state)
-- Edit tools and playback modes (UI state)
-- Copy to clipboard (read-only operation)
-- **Export to temp directory only** (temp dir: `/tmp` or similar - enables audio analysis)
-
-### Common Configuration Examples
-
-**Safe exploration (default - read-only with temp exports):**
-```bash
-# No ALLOW_WRITES needed - read-only mode
-# Exports to temp directory allowed for audio analysis
-# Mute/solo, timeline selection, edit tools always allowed
-PTSL_PROTO_PATH=/path/to/PTSL.proto node dist/index.js
-```
-
-**Allow Claude to add markers:**
-```bash
-ALLOW_WRITES=memory PTSL_PROTO_PATH=/path/to/PTSL.proto node dist/index.js
-```
-
-**Allow exports to any location:**
-```bash
-ALLOW_WRITES=export PTSL_PROTO_PATH=/path/to/PTSL.proto node dist/index.js
-```
-
-**Allow editing but not saving:**
-```bash
-ALLOW_WRITES=memory,clipboard PTSL_PROTO_PATH=/path/to/PTSL.proto node dist/index.js
-```
-
-**Full control (use with caution):**
-```bash
+# Allow everything (use with caution)
 ALLOW_WRITES=all PTSL_PROTO_PATH=/path/to/PTSL.proto node dist/index.js
 ```
 
-**Read-only mode (maximum safety):**
-```bash
-ALLOW_WRITES= PTSL_PROTO_PATH=/path/to/PTSL.proto node dist/index.js
-```
+### Permission Groups
 
-> ⚠️ **Recommendation:** Start with the default mode to explore safely. Enable additional permission groups only as needed. The granular system lets you give Claude exactly the access it needs without unnecessary risk.
+| Group | Operations | Risk Level |
+|-------|-----------|------------|
+| `memory` | Create/edit/delete markers | 🟢 Safe |
+| `export` | Export audio to any location | 🟡 Moderate |
+| `clipboard` | Cut/paste/clear audio | 🟠 Destructive |
+| `track_structure` | Create/delete tracks | 🟠 Destructive |
+| `session` | Save/open/close sessions | 🔴 High |
+| `recording` | Record audio | 🔴 High |
 
 ## Audio Analysis for AI
 
@@ -162,13 +106,7 @@ Generates a high-resolution waveform image with amplitude over time. The visuali
 **Use cases**: Identifying clip boundaries, seeing dynamics, spotting silence or loud sections, understanding rhythm patterns
 
 **Example waveform output** (4096x2048 pixels):
-```
-Black waveform on white background with:
-- Top channel: Left audio
-- Bottom channel: Right audio
-- Time labels across top: 00:00:00:00, 00:00:01:00, 00:00:02:00...
-- Amplitude labels on left: 0dB, -6dB, -12dB, -18dB, -24dB
-```
+![Example waveform](https://raw.githubusercontent.com/skrul/protools-mcp-server/main/docs/images/example_waveform.png)
 
 #### 2. Spectrogram Visualization
 Generates a frequency spectrum visualization showing frequency content over time. Colors represent amplitude at each frequency.
@@ -176,12 +114,7 @@ Generates a frequency spectrum visualization showing frequency content over time
 **Use cases**: Identifying frequency ranges, spotting harmonics, seeing tonal vs percussive content, detecting resonances
 
 **Example spectrogram output** (2048x1024 pixels):
-```
-Frequency (vertical, 0-24kHz) vs Time (horizontal)
-- Brighter colors = louder frequencies
-- Vertical lines = transients/hits
-- Horizontal bands = sustained tones
-```
+![Example waveform](https://raw.githubusercontent.com/skrul/protools-mcp-server/main/docs/images/example_spectrogram.png)
 
 #### 3. Peak/RMS Analysis
 Extracts numerical amplitude data at regular intervals throughout the audio.
