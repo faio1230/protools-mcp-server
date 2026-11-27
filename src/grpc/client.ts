@@ -170,7 +170,10 @@ export class PTSLClient {
 
     const legacyStreamingCommands = [
       CommandId.RegisterConnection, CommandId.GetTimelineSelection, CommandId.GetSessionSampleRate,
-      CommandId.GetTrackList,
+      CommandId.GetTrackList, CommandId.GetSessionPath, CommandId.GetEditModeOptions,
+      CommandId.SetEditModeOptions, CommandId.GetMainCounterFormat, CommandId.SetMainCounterFormat,
+      CommandId.SaveSessionAs, CommandId.SelectTracksByName, CommandId.SelectAllClipsOnTrack,
+      CommandId.SetTimelineSelection, CommandId.ConsolidateClip, CommandId.ExportClipsAsFiles,
     ];
     if (commandId === CommandId.ExportMix || (this.apiVersion.version === 5 && legacyStreamingCommands.includes(commandId))) {
       let completed;

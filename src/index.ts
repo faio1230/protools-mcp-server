@@ -68,9 +68,13 @@ async function main() {
     }
   );
 
+  const exposedTools = process.env.PTSL_EXPORT_ONLY === '1'
+    ? allTools.filter(t => ['get_track_list', 'export_stems', 'export_dry_tracks'].includes(t.name))
+    : allTools;
+
   // List available tools
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: allTools,
+    tools: exposedTools,
   }));
 
   // List available resources
@@ -365,6 +369,7 @@ Use \`ptsl_command\` for:
   // Handle tool calls
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {
+      if (!exposedTools.some(t => t.name === request.params.name)) throw new Error('Tool is not enabled in this server profile.');
       return await handleToolCall(
         request.params.name,
         request.params.arguments || {},

@@ -1,4 +1,5 @@
 import { PTSLClient } from '../grpc/client.js';
+import { dryTool, exportDryTracks } from './dry-tracks.js';
 import { exportStems, stemTool } from './stems.js';
 import { sessionTools, handleSessionTool } from './session.js';
 import { trackTools, handleTrackTool } from './tracks.js';
@@ -16,6 +17,7 @@ import { diagnosticTools, handleDiagnosticTool } from './diagnostic.js';
  */
 export const allTools = [
   stemTool,
+  dryTool,
   ...sessionTools,
   ...trackTools,
   ...transportTools,
@@ -36,6 +38,7 @@ export async function handleToolCall(
   args: any,
   client: PTSLClient
 ): Promise<any> {
+  if (toolName === dryTool.name) return exportDryTracks(client, args.tracks);
   if (toolName === stemTool.name) return exportStems(args, client);
 
   // Check session tools

@@ -18,7 +18,7 @@ export const stemTool = {
   },
 };
 
-async function readWav(file: string) {
+export async function readWav(file: string) {
   const handle = await open(file, 'r');
   try {
     const size = (await handle.stat()).size;
