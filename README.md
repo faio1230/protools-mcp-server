@@ -4,6 +4,20 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 
 > ⚠️ **Experimental Project:** This is a work in progress and not all Pro Tools features are implemented yet. Use at your own risk!
 
+## Stem export (fork)
+
+The `export_stems` MCP tool bounces named buses over the current timeline selection, using 48 kHz, 24-bit interleaved PCM WAV. Use the exact bus names in the active session. The host must support the requested number of mix sources. On editions with a single-source limit, supply one bus per call.
+
+1. Configure the Avid SDK file as described under Prerequisites and enable `ALLOW_WRITES=export` for your MCP server.
+2. Select the desired interval in Pro Tools, including any reverb or delay tail.
+3. Pass an existing absolute directory on the Pro Tools computer. For example:
+
+```json
+{"buses":["Band","Lead Vox","Click"],"directory":"/absolute/path/to/exports","offline":true}
+```
+
+Each request creates a fresh subfolder. Pro Tools names the files. The tool reads the RIFF WAV headers and reports file paths, channel counts and sample lengths after checking the output count, sample format and duration. Failed runs report their folder for inspection. Real-time bounce is the default. To run the mock-host regression checks, run `npm run build` and `node --test test/stems.mjs`. An actual bounce requires a running Pro Tools session and the Avid SDK.
+
 ## Features
 
 The server provides AI assistants with the following capabilities:
