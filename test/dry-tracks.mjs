@@ -21,7 +21,7 @@ async function host(t, switchCopy = true) {
   const original = path.join(root,'Original.ptx');
   await writeFile(original,'original'); let session = original;
   let name, range; const edits = [];
-  const tracks = ['Backing','Voice'].map((name,i) => ({ name, type:'TT_Audio', format:i ? 'TF_Mono':'TF_Stereo', track_attributes:{contains_clips:true} }));
+  const tracks = ['Backing','Voice'].map((name,i) => ({ name, type:'TT_Audio', format:i ? 'TF_Mono':'TF_Stereo', track_attributes:{contains_clips:true, is_frozen:i === 0} }));
   return {
     original, edits,
     async run() {
@@ -29,7 +29,12 @@ async function host(t, switchCopy = true) {
         let body = {};
         switch (id) {
           case C.GetSessionPath: body = {session_path:{path:session}}; break;
-          case C.GetTrackList: body = {track_list:tracks}; break;
+          case C.GetTrackList:
+            assert.deepEqual(b.track_filter_list,[{filter:'All',is_inverted:false}]);
+            body = {track_list:tracks}; break;
+          case C.SetTrackFrozenState:
+            assert.notEqual(session,original); assert.deepEqual(b,{track_names:['Backing'],enabled:false});
+            tracks[0].track_attributes.is_frozen = false; break;
           case C.GetSessionSampleRate: body = {sample_rate:'SR_48000'}; break;
           case C.SaveSessionAs:
             if (switchCopy) { session = path.join(b.session_location,b.session_name+'.ptx'); await writeFile(session,'copy'); }

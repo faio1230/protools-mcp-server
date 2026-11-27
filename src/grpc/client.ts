@@ -173,7 +173,7 @@ export class PTSLClient {
       CommandId.GetTrackList, CommandId.GetSessionPath, CommandId.GetEditModeOptions,
       CommandId.SetEditModeOptions, CommandId.GetMainCounterFormat, CommandId.SetMainCounterFormat,
       CommandId.SaveSessionAs, CommandId.SelectTracksByName, CommandId.SelectAllClipsOnTrack,
-      CommandId.SetTimelineSelection, CommandId.ConsolidateClip, CommandId.ExportClipsAsFiles,
+      CommandId.SetTimelineSelection, CommandId.ConsolidateClip, CommandId.ExportClipsAsFiles, CommandId.SetTrackFrozenState,
     ];
     if (commandId === CommandId.ExportMix || (this.apiVersion.version === 5 && legacyStreamingCommands.includes(commandId))) {
       let completed;

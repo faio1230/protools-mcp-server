@@ -2,6 +2,7 @@ import { mkdir, mkdtemp, readdir, realpath, rename } from 'node:fs/promises';
 import path from 'node:path';
 import type { PTSLClient } from '../grpc/client.js';
 import { CommandId as C, PermissionGroup as P } from '../grpc/commands.js';
+import { readSessionTracks } from './tracks.js';
 import { readWav } from './stems.js';
 
 export const dryTool = {
@@ -36,12 +37,18 @@ export async function exportDryTracks(client: PTSLClient, names: unknown) {
   printing = true;
   try {
     const source = await currentSession();
-    const trackList = (await request(C.GetTrackList, { pagination_request: { limit: 0, offset: 0 } })).track_list ?? [];
+    const trackList = await readSessionTracks(client);
     const tracks = names.map(name => {
-      const matches = trackList.filter((t: any) => t.name === name);
+      const matches = trackList.filter(t => t.name === name);
+      if (matches.length !== 1) throw new Error('Expected one track named ' + name + ' in ' + path.basename(source) +
+        '; found ' + matches.length + '. Available tracks: ' + trackList.map(t => t.name).join(', '));
       const t = matches[0];
-      if (matches.length !== 1 || !['TT_Audio','AudioTrack'].includes(t.type) || !['TF_Mono','TF_Stereo'].includes(t.format) || !t.track_attributes?.contains_clips || t.track_attributes?.is_frozen) throw new Error('Expected one unfrozen audio playlist with clips: ' + name);
-      return { name, channels: t.format === 'TF_Mono' ? 1 : 2 };
+      if (!['TT_Audio','AudioTrack'].includes(t.type) || !['TF_Mono','TF_Stereo'].includes(t.format)) {
+        throw new Error('Unsupported track ' + name + ': ' + t.type + ', ' + t.format);
+      }
+      const frozen = t.track_attributes?.is_frozen === true;
+      if (!frozen && !t.track_attributes?.contains_clips) throw new Error('Active playlist contains no clips: ' + name);
+      return { name, channels: t.format === 'TF_Mono' ? 1 : 2, frozen };
     });
     const r = String((await request(C.GetSessionSampleRate)).sample_rate);
     const rate = Number(/^(?:SR_|SRate_)(\d+)$/.exec(r)?.[1]);
@@ -59,6 +66,17 @@ export async function exportDryTracks(client: PTSLClient, names: unknown) {
       if (!active.startsWith(dir + path.sep) || path.basename(active, '.ptx') !== copyName) throw new Error('Print working copy is not active. Stopped before editing.');
     };
     await assertCopy();
+    const frozen = tracks.filter(t => t.frozen).map(t => t.name);
+    if (frozen.length) {
+      await request(C.SetTrackFrozenState, { track_names: frozen, enabled: false });
+      const thawed = await readSessionTracks(client);
+      for (const name of frozen) {
+        const t = thawed.find(track => track.name === name);
+        if (t?.track_attributes?.is_frozen || !t?.track_attributes?.contains_clips) {
+          throw new Error('Could not access original playlist in the print copy: ' + name);
+        }
+      }
+    }
     const editOptions = (await request(C.GetEditModeOptions)).edit_mode_options;
     const counter = (await request(C.GetMainCounterFormat)).current_setting;
     if (!editOptions || !counter) throw new Error('Could not read selection settings.');

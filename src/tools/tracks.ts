@@ -109,17 +109,22 @@ export async function handleTrackTool(
  *   }
  * }
  */
+export async function readSessionTracks(client: PTSLClient): Promise<any[]> {
+  const response = await client.sendRequest(CommandId.GetTrackList, {
+    track_filter_list: [{ filter: 'All', is_inverted: false }],
+    pagination_request: { limit: 0, offset: 0 },
+  });
+  if (!['Completed', 'TStatus_Completed'].includes(response.header?.status)) {
+    throw new Error(response.response_error_json || 'GetTrackList did not complete');
+  }
+  const tracks = response.response_body?.track_list ?? [];
+  if (!Array.isArray(tracks)) throw new Error('Invalid track list');
+  return tracks;
+}
+
 async function getTrackList(client: PTSLClient) {
   try {
-    const response = await client.sendRequest(CommandId.GetTrackList, {
-      track_filter_list: [{ filter: 'All', is_inverted: false }],
-      pagination_request: { limit: 0, offset: 0 },
-    });
-    if (!['Completed', 'TStatus_Completed'].includes(response.header?.status)) {
-      throw new Error(response.response_error_json || 'GetTrackList did not complete');
-    }
-    const tracks = response.response_body?.track_list ?? [];
-    if (!Array.isArray(tracks)) throw new Error('Invalid track list');
+    const tracks = await readSessionTracks(client);
 
     const trackSummary = tracks.map((track: any) => {
       return `• **${track.name}** (${track.type}, ${track.format})\n` +

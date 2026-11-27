@@ -38,6 +38,7 @@ export enum CommandId {
 
   // Track Properties
   SetTrackMuteState = 85,
+  SetTrackFrozenState = 94,
   SetTrackSoloState = 86,
   SetTrackRecordEnableState = 88,
 
@@ -115,6 +116,7 @@ export const COMMAND_PERMISSION_GROUPS = new Map<number, PermissionGroup>([
   [CommandId.SetEditModeOptions, PermissionGroup.PRINT],
   [CommandId.SetMainCounterFormat, PermissionGroup.PRINT],
   [CommandId.ConsolidateClip, PermissionGroup.PRINT],
+  [CommandId.SetTrackFrozenState, PermissionGroup.PRINT],
   [CommandId.Cut, PermissionGroup.CLIPBOARD],
   [CommandId.Paste, PermissionGroup.CLIPBOARD],
   [CommandId.Clear, PermissionGroup.CLIPBOARD],
