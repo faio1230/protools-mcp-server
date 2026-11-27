@@ -98,7 +98,7 @@ export async function exportStems(args: { buses?: unknown; directory?: unknown; 
         compression_type: 'CT_PCM', export_format: 'EF_Interleaved', bit_depth: 'Bit24', sample_rate: 'SR_48000',
         delivery_format: 'EM_DF_FilePerMixSource', pad_to_frame_boundary: 'TB_False',
       },
-      location_info: { file_destination: 'EM_FD_Directory', directory: folder, import_after_bounce: 'TB_False' },
+      location_info: { file_destination: 'EM_FD_Directory', directory: folder + path.sep, import_after_bounce: 'TB_False' },
       offline_bounce: offline ? 'TB_True' : 'TB_False',
     });
     const names = (await readdir(folder, { withFileTypes: true }))

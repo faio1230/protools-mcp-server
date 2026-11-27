@@ -168,7 +168,10 @@ export class PTSLClient {
     // Check permissions for this command
     this.checkCommandPermission(commandId, requestBody);
 
-    const legacyStreamingCommands = [CommandId.RegisterConnection, CommandId.GetTimelineSelection, CommandId.GetSessionSampleRate];
+    const legacyStreamingCommands = [
+      CommandId.RegisterConnection, CommandId.GetTimelineSelection, CommandId.GetSessionSampleRate,
+      CommandId.GetTrackList,
+    ];
     if (commandId === CommandId.ExportMix || (this.apiVersion.version === 5 && legacyStreamingCommands.includes(commandId))) {
       let completed;
       for await (const update of this.sendStreamingRequest(commandId, requestBody, skipSessionId)) {

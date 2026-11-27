@@ -38,8 +38,11 @@ async function setup(t, options = {}) {
         result = { in_time: '1000', out_time: options.end || '1032' };
       } else if (id === CommandId.ExportMix) {
         assert.deepEqual(body.mix_source_list, [{ source_type: 'Bus', name: 'Band' }, { source_type: 'Bus', name: 'Click' }]);
+        assert.ok(body.location_info.directory.endsWith(path.sep));
         assert.equal(body.audio_info.delivery_format, 'EM_DF_FilePerMixSource');
-        if (options.failed) return { header: { status: 'Failed' }, response_error_json: 'Unknown bus' };
+        if (options.failed) {
+          return { header: { status: 'Failed' }, response_error_json: 'Unknown bus' };
+        }
         for (const name of ['Band', 'Click']) {
           await writeFile(path.join(body.location_info.directory, name + '.wav'), wav(name === 'Band' ? 32 : options.frames || 32));
         }
