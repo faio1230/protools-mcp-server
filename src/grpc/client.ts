@@ -17,6 +17,8 @@ import {
  */
 export class PTSLClient {
   private protoPath: string;
+  private apiVersion: { version: number; version_minor?: number; version_revision?: number } =
+    { version: 2025, version_minor: 10, version_revision: 0 };
   private serverAddress: string;
   private client: any;
   private sessionId: string = '';
@@ -95,8 +97,30 @@ export class PTSLClient {
         oneofs: true,
       });
 
-      const protoDescriptor = grpc.loadPackageDefinition(packageDefinition) as any;
-      const ptslService = protoDescriptor.ptsl.PTSL;
+      const legacy = packageDefinition['ptsl_2024_10_0.PTSL'];
+      let ptslService: grpc.ServiceClientConstructor;
+      if (legacy && 'SendGrpcRequest' in legacy) {
+        // Historical definitions in newer SDKs use a distinct package name.
+        // Pro Tools exposes the unversioned service on the wire.
+        const methods: grpc.ServiceDefinition = Object.fromEntries(
+          Object.entries(legacy).map(([name, method]) => [
+            name, { ...method, path: '/ptsl.PTSL/' + name },
+          ])
+        );
+        ptslService = grpc.makeGenericClientConstructor(methods, 'ptsl.PTSL');
+        this.apiVersion = { version: 5 };
+      } else {
+        const definition = packageDefinition['ptsl.PTSL'];
+        if (!definition || !('SendGrpcRequest' in definition)) {
+          throw new Error('Expected PTSL.proto or PTSL.2024.10.0.proto from the Avid SDK.');
+        }
+        ptslService = grpc.makeGenericClientConstructor(definition, 'ptsl.PTSL');
+        const header = packageDefinition['ptsl.RequestHeader'];
+        if (header && 'type' in header) {
+          const fields = (header.type as { field?: { name: string }[] }).field;
+          if (fields && !fields.some(field => field.name === 'version_minor')) this.apiVersion = { version: 5 };
+        }
+      }
 
       // Create client
       this.client = new ptslService(
@@ -105,7 +129,7 @@ export class PTSLClient {
       );
 
       this.connected = true;
-      console.error(`✓ Connected to PTSL server at ${this.serverAddress}`);
+      console.error(`PTSL client initialized for ${this.serverAddress}`);
     } catch (error) {
       throw new Error(`Failed to connect to PTSL server: ${error}`);
     }
@@ -126,7 +150,7 @@ export class PTSLClient {
 
     if (response.response_body && response.response_body.session_id) {
       this.sessionId = response.response_body.session_id;
-      console.error(`✓ Registered connection with session ID: ${this.sessionId}`);
+      console.error('Registered with Pro Tools.');
       return this.sessionId;
     }
 
@@ -144,12 +168,24 @@ export class PTSLClient {
     // Check permissions for this command
     this.checkCommandPermission(commandId, requestBody);
 
+    const legacyStreamingCommands = [CommandId.RegisterConnection, CommandId.GetTimelineSelection, CommandId.GetSessionSampleRate];
+    if (commandId === CommandId.ExportMix || (this.apiVersion.version === 5 && legacyStreamingCommands.includes(commandId))) {
+      let completed;
+      for await (const update of this.sendStreamingRequest(commandId, requestBody, skipSessionId)) {
+        const status = String(update.header?.status).replace(/^TStatus_/, '');
+        if (status === 'Completed') completed = update;
+        else if (!['Queued', 'Pending', 'InProgress', 'WaitingForUserInput'].includes(status)) {
+          throw new Error(update.response_error_json || 'PTSL command ' + commandId + ' returned ' + status);
+        }
+      }
+      if (!completed) throw new Error('PTSL stream ended without a completion response for command ' + commandId);
+      return completed;
+    }
+
     return new Promise((resolve, reject) => {
       const header: any = {
-        command: commandId,  // Note: field is called 'command', not 'command_id'
-        version: 2025,       // PTSL API version (year)
-        version_minor: 10,   // PTSL API version (month)
-        version_revision: 0, // PTSL API revision
+        command: commandId,
+        ...this.apiVersion,
       };
 
       // Only include session_id if we have one and not explicitly skipping it
@@ -195,7 +231,7 @@ export class PTSLClient {
   /**
    * Send a streaming request to Pro Tools
    */
-  async *sendStreamingRequest(commandId: number, requestBody: any = {}): AsyncIterableIterator<any> {
+  async *sendStreamingRequest(commandId: number, requestBody: any = {}, skipSessionId = false): AsyncIterableIterator<any> {
     if (!this.connected) {
       throw new Error('Not connected to PTSL server. Call connect() first.');
     }
@@ -205,8 +241,9 @@ export class PTSLClient {
 
     const request = {
       header: {
-        session_id: this.sessionId,
-        command_id: commandId,
+        ...(!skipSessionId && this.sessionId ? { session_id: this.sessionId } : {}),
+        command: commandId,
+        ...this.apiVersion,
       },
       request_body_json: JSON.stringify(requestBody),
     };

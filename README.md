@@ -18,6 +18,10 @@ The `export_stems` MCP tool bounces named buses over the current timeline select
 
 Each request creates a fresh subfolder. Pro Tools names the files. The tool reads the RIFF WAV headers and reports file paths, channel counts and sample lengths after checking the output count, sample format and duration. Failed runs report their folder for inspection. Real-time bounce is the default. To run the mock-host regression checks, run `npm run build` and `node --test test/stems.mjs`. An actual bounce requires a running Pro Tools session and the Avid SDK.
 
+### Pro Tools 2024.10 host check
+
+Point `PTSL_PROTO_PATH` to the SDK's `Source/PTSL.2024.10.0.proto`, or place that file in the git-ignored `ptsl_sdk/` directory for the check script. With Pro Tools running and the project built, run `node scripts/check-host.mjs`. This starts the stdio MCP server and checks registration and tool discovery. For a short test bounce, select a few seconds in Pro Tools and run `node scripts/check-host.mjs "Exact Bus Name" "/absolute/existing/output/directory"`. Run the SDK-dependent regression check with `PTSL_2024_TEST_PROTO="$PTSL_PROTO_PATH" node --test test/*.mjs`.
+
 ## Features
 
 The server provides AI assistants with the following capabilities:
