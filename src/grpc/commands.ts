@@ -28,6 +28,11 @@ export enum CommandId {
 
   // Track Operations
   GetTrackList = 3,
+  SelectAllClipsOnTrack = 4,
+  ConsolidateClip = 9,
+  GetEditModeOptions = 79,
+  SetEditModeOptions = 80,
+  SetMainCounterFormat = 100,
   CreateNewTracks = 72,
   SelectTracksByName = 73,
 
@@ -96,6 +101,7 @@ export enum PermissionGroup {
   MEMORY = 'memory',                // Markers/memory locations
   TRACK_STATE = 'track_state',      // Mute, Solo, Record Enable
   TRACK_STRUCTURE = 'track_structure', // Create/Delete tracks
+  PRINT = 'print',
   SESSION = 'session',              // Save, Open, Close, Create
   EXPORT = 'export',                // Export operations
   RECORDING = 'recording',          // Record mode/enable
@@ -106,6 +112,9 @@ export enum PermissionGroup {
  */
 export const COMMAND_PERMISSION_GROUPS = new Map<number, PermissionGroup>([
   // Clipboard operations
+  [CommandId.SetEditModeOptions, PermissionGroup.PRINT],
+  [CommandId.SetMainCounterFormat, PermissionGroup.PRINT],
+  [CommandId.ConsolidateClip, PermissionGroup.PRINT],
   [CommandId.Cut, PermissionGroup.CLIPBOARD],
   [CommandId.Paste, PermissionGroup.CLIPBOARD],
   [CommandId.Clear, PermissionGroup.CLIPBOARD],
@@ -156,6 +165,8 @@ export const READ_ONLY_COMMANDS = new Set<number>([
   CommandId.GetSessionStartTime,
   CommandId.GetSessionLength,
   CommandId.GetMainCounterFormat,
+  CommandId.GetEditModeOptions,
+  CommandId.SelectAllClipsOnTrack,
   CommandId.GetTrackList,
   CommandId.SelectTracksByName,
   CommandId.GetPlaybackMode,

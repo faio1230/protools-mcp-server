@@ -1,4 +1,6 @@
 import { PTSLClient } from '../grpc/client.js';
+import { dryTool, exportDryTracks } from './dry-tracks.js';
+import { exportStems, stemTool } from './stems.js';
 import { sessionTools, handleSessionTool } from './session.js';
 import { trackTools, handleTrackTool } from './tracks.js';
 import { transportTools, handleTransportTool } from './transport.js';
@@ -14,6 +16,8 @@ import { diagnosticTools, handleDiagnosticTool } from './diagnostic.js';
  * All available MCP tools
  */
 export const allTools = [
+  stemTool,
+  dryTool,
   ...sessionTools,
   ...trackTools,
   ...transportTools,
@@ -34,6 +38,9 @@ export async function handleToolCall(
   args: any,
   client: PTSLClient
 ): Promise<any> {
+  if (toolName === dryTool.name) return exportDryTracks(client, args.tracks);
+  if (toolName === stemTool.name) return exportStems(args, client);
+
   // Check session tools
   if (sessionTools.find((t) => t.name === toolName)) {
     return await handleSessionTool(toolName, args, client);

@@ -4,6 +4,30 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 
 > ⚠️ **Experimental Project:** This is a work in progress and not all Pro Tools features are implemented yet. Use at your own risk!
 
+## Stem export (fork)
+
+The `export_stems` MCP tool bounces named buses over the current timeline selection, using 48 kHz, 24-bit interleaved PCM WAV. Use the exact bus names in the active session. The host must support the requested number of mix sources. On editions with a single-source limit, supply one bus per call.
+
+1. Configure the Avid SDK file as described under Prerequisites and enable `ALLOW_WRITES=export` for your MCP server.
+2. Select the desired interval in Pro Tools, including any reverb or delay tail.
+3. Pass an existing absolute directory on the Pro Tools computer. For example:
+
+```json
+{"buses":["Band","Lead Vox","Click"],"directory":"/absolute/path/to/exports","offline":true}
+```
+
+Each request creates a fresh subfolder. Pro Tools names the files. The tool reads the RIFF WAV headers and reports file paths, channel counts and sample lengths after checking the output count, sample format and duration. Failed runs report their folder for inspection. Real-time bounce is the default. To run the mock-host regression checks, run `npm run build` and `node --test test/stems.mjs`. An actual bounce requires a running Pro Tools session and the Avid SDK.
+
+### Dry multitracks from audio playlists
+
+The local stdio tool `export_dry_tracks` accepts a list of audio track names. It derives the session path and the common interval from the active playlists. It saves a working copy under the session's `Bounced Files` folder, consolidates the chosen clips on that copy and exports a separate 48 kHz / 24-bit WAV per track. Mono tracks stay mono and stereo tracks stay stereo. This uses clip audio before the mixer's inserts, volume, pan and sends. The working copy stays open. The published WAV folder appears after every file passes channel-count and duration checks.
+
+On a Mac with the server built and the matching SDK file configured, run `scripts/Install-Pro-Tools-MCP.command` once to register the local server with Codex. Open Pro Tools before starting a Codex session that uses it. This profile exposes track discovery, bus bounce and dry multitrack export only. Files remain on the local computer.
+
+### Pro Tools 2024.10 host check
+
+Point `PTSL_PROTO_PATH` to the SDK's `Source/PTSL.2024.10.0.proto`, or place that file in the git-ignored `ptsl_sdk/` directory for the check script. With Pro Tools running and the project built, run `node scripts/check-host.mjs`. This starts the stdio MCP server and checks registration and tool discovery. For a short test bounce, select a few seconds in Pro Tools and run `node scripts/check-host.mjs "Exact Bus Name" "/absolute/existing/output/directory"`. Run the SDK-dependent regression check with `PTSL_2024_TEST_PROTO="$PTSL_PROTO_PATH" node --test test/*.mjs`.
+
 ## Features
 
 The server provides AI assistants with the following capabilities:
