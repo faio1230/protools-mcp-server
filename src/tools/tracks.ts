@@ -109,16 +109,22 @@ export async function handleTrackTool(
  *   }
  * }
  */
-export async function readSessionTracks(client: PTSLClient): Promise<any[]> {
+export async function readSessionTracks(client: PTSLClient, timeoutMs?: number): Promise<any[]> {
   const response = await client.sendRequest(CommandId.GetTrackList, {
     track_filter_list: [{ filter: 'All', is_inverted: false }],
     pagination_request: { limit: 0, offset: 0 },
-  });
+  }, false, timeoutMs);
   if (!['Completed', 'TStatus_Completed'].includes(response.header?.status)) {
     throw new Error(response.response_error_json || 'GetTrackList did not complete');
   }
-  const tracks = response.response_body?.track_list ?? [];
+  const body = response.response_body;
+  if (!body || typeof body !== 'object') throw new Error('GetTrackList returned no response body');
+  const tracks = body.track_list ?? [];
   if (!Array.isArray(tracks)) throw new Error('Invalid track list');
+  const total = body.pagination_response?.total;
+  if (total !== undefined && Number(total) > tracks.length) {
+    throw new Error(`GetTrackList returned only ${tracks.length} of ${total} tracks`);
+  }
   return tracks;
 }
 

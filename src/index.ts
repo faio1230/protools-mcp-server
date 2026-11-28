@@ -16,7 +16,7 @@ import {
 } from '@modelcontextprotocol/sdk/types.js';
 import { PTSLClient } from './grpc/client.js';
 import { loadConfig, validateConfig } from './config.js';
-import { allTools, handleToolCall } from './tools/index.js';
+import { getExposedTools, handleToolCall } from './tools/index.js';
 
 async function main() {
   // Load and validate configuration
@@ -38,21 +38,7 @@ async function main() {
     process.exit(1);
   }
 
-  // Initialize PTSL client
-  let client: PTSLClient;
-  try {
-    client = new PTSLClient(config.protoPath, config.serverAddress);
-    await client.connect();
-    await client.registerConnection('Pro Tools MCP Server');
-  } catch (error) {
-    console.error(`Failed to connect to Pro Tools: ${error}`);
-    console.error('');
-    console.error('Make sure:');
-    console.error('  1. Pro Tools is running');
-    console.error('  2. PTSL server is available on localhost:31416');
-    console.error('  3. Your PTSL.proto file matches your Pro Tools version');
-    process.exit(1);
-  }
+  const client = new PTSLClient(config.protoPath, config.serverAddress, config.sdkVersion, 'Pro Tools MCP Server');
 
   // Create MCP server
   const server = new Server(
@@ -68,13 +54,9 @@ async function main() {
     }
   );
 
-  const exposedTools = process.env.PTSL_EXPORT_ONLY === '1'
-    ? allTools.filter(t => ['get_track_list', 'export_stems', 'export_dry_tracks'].includes(t.name))
-    : allTools;
-
   // List available tools
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: exposedTools,
+    tools: getExposedTools(),
   }));
 
   // List available resources
@@ -369,7 +351,6 @@ Use \`ptsl_command\` for:
   // Handle tool calls
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {
-      if (!exposedTools.some(t => t.name === request.params.name)) throw new Error('Tool is not enabled in this server profile.');
       return await handleToolCall(
         request.params.name,
         request.params.arguments || {},
@@ -393,7 +374,6 @@ Use \`ptsl_command\` for:
   await server.connect(transport);
 
   console.error('Pro Tools MCP Server running');
-  console.error(`Connected to Pro Tools with session ID: ${client.getSessionId()}`);
 }
 
 main().catch((error) => {
