@@ -3,7 +3,9 @@ import path from 'node:path';
 import type { PTSLClient } from '../grpc/client.js';
 import { CommandId as C, PermissionGroup as P } from '../grpc/commands.js';
 import { readSessionTracks } from './tracks.js';
-import { readWav } from './stems.js';
+import { readWav, writeStemWav } from './stem-wav.js';
+import { captureSessionSelection, withSessionState } from './mixer-state.js';
+import { assertPrintCopy, restorePrintSource } from './print-session.js';
 
 export const dryTool = {
   name: 'export_dry_tracks',
@@ -16,7 +18,18 @@ export const dryTool = {
 };
 
 let printing = false;
+interface DryPrintOptions {
+  range: [number, number];
+  runDir: string;
+  channels: ReadonlyMap<string, number>;
+}
+
 export async function exportDryTracks(client: PTSLClient, names: unknown) {
+  const result = await withSessionState(client, () => printDryTracks(client, names));
+  return { content: [{ type: 'text', text: JSON.stringify(result) }] };
+}
+
+export async function printDryTracks(client: PTSLClient, names: unknown, options?: DryPrintOptions) {
   if (printing) throw new Error('A dry export is already in progress.');
   if (![P.EXPORT, P.SESSION, P.PRINT].every(p => client.isPermissionGroupAllowed(p))) throw new Error('Dry export requires export,session,print permissions.');
   if (!Array.isArray(names) || !names.length || names.some(n => typeof n !== 'string' || !n.trim() || /[\/\\:\x00-\x1f]/u.test(n)) ||
@@ -34,37 +47,42 @@ export async function exportDryTracks(client: PTSLClient, names: unknown) {
     return [Number(r.in_time), Number(r.out_time)];
   };
   let runDir = '';
+  let copy: { work: string; name: string } | undefined;
+  let selection: Awaited<ReturnType<typeof captureSessionSelection>> | undefined;
+  let failure: unknown;
   printing = true;
   try {
-    const source = await currentSession();
+    const session = await currentSession();
     const trackList = await readSessionTracks(client);
     const tracks = names.map(name => {
       const matches = trackList.filter(t => t.name === name);
-      if (matches.length !== 1) throw new Error('Expected one track named ' + name + ' in ' + path.basename(source) +
+      if (matches.length !== 1) throw new Error('Expected one track named ' + name + ' in ' + path.basename(session) +
         '; found ' + matches.length + '. Available tracks: ' + trackList.map(t => t.name).join(', '));
       const t = matches[0];
-      if (!['TT_Audio','AudioTrack'].includes(t.type) || !['TF_Mono','TF_Stereo'].includes(t.format)) {
+      if (!['TT_Audio','AudioTrack','TType_Audio'].includes(t.type) || !/^(?:TF|TFormat)_(?:Mono|Stereo)$/.test(t.format)) {
         throw new Error('Unsupported track ' + name + ': ' + t.type + ', ' + t.format);
       }
       const frozen = t.track_attributes?.is_frozen === true;
       if (!frozen && !t.track_attributes?.contains_clips) throw new Error('Active playlist contains no clips: ' + name);
-      return { name, channels: t.format === 'TF_Mono' ? 1 : 2, frozen };
+      return { name, channels: t.format.endsWith('_Mono') ? 1 : 2, frozen };
     });
     const r = String((await request(C.GetSessionSampleRate)).sample_rate);
     const rate = Number(/^(?:SR_|SRate_)(\d+)$/.exec(r)?.[1]);
     if (!rate) throw new Error('Unrecognized session rate: ' + r);
-    const parent = path.join(path.dirname(source), 'Bounced Files');
+    const parent = path.join(path.dirname(session), 'Bounced Files');
     await mkdir(parent, { recursive: true });
-    runDir = await mkdtemp(path.join(parent, 'Dry-'));
+    runDir = options?.runDir ?? await mkdtemp(path.join(parent, 'Dry-'));
     const work = path.join(runDir, 'Work');
     await mkdir(work);
     const copyName = 'Print-' + path.basename(runDir);
+    if (options) {
+      selection = await captureSessionSelection(client);
+      if (selection.sessionPath !== session) throw new Error('Active session changed before export.');
+      await request(C.SaveSession);
+    }
+    copy = { work, name: copyName };
     await request(C.SaveSessionAs, { session_name: copyName, session_location: work + path.sep });
-    const assertCopy = async () => {
-      const active = await currentSession();
-      const dir = await realpath(work);
-      if (!active.startsWith(dir + path.sep) || path.basename(active, '.ptx') !== copyName) throw new Error('Print working copy is not active. Stopped before editing.');
-    };
+    const assertCopy = () => assertPrintCopy(client, work, copyName);
     await assertCopy();
     const frozen = tracks.filter(t => t.frozen).map(t => t.name);
     if (frozen.length) {
@@ -88,12 +106,14 @@ export async function exportDryTracks(client: PTSLClient, names: unknown) {
     try {
       await request(C.SetEditModeOptions, { edit_mode_options: { ...editOptions, link_track_and_edit_selection: true, link_timeline_and_edit_selection: true } });
       await request(C.SetMainCounterFormat, { time_scale: 'Samples' });
-      let start = Infinity, end = -Infinity;
-      for (const track of tracks) {
-        await selectOne(track.name);
-        await request(C.SelectAllClipsOnTrack, { track_name: track.name });
-        const [a,b] = await getRange();
-        start = Math.min(start,a); end = Math.max(end,b);
+      let [start, end] = options?.range ?? [Infinity, -Infinity];
+      if (!options) {
+        for (const track of tracks) {
+          await selectOne(track.name);
+          await request(C.SelectAllClipsOnTrack, { track_name: track.name });
+          const [a,b] = await getRange();
+          start = Math.min(start,a); end = Math.max(end,b);
+        }
       }
       const frames = (end - start) * 48000 / rate;
       const stage = path.join(runDir,'In Progress');
@@ -112,18 +132,31 @@ export async function exportDryTracks(client: PTSLClient, names: unknown) {
         if (files.length !== 1) throw new Error('Expected one exported clip on ' + track.name);
         const wav = await readWav(path.join(dest,files[0]));
         if (wav.channels !== track.channels || wav.frames < Math.floor(frames) || wav.frames > Math.ceil(frames) || (prints.length && prints[0].frames !== wav.frames)) throw new Error('Unexpected channel count or duration on ' + track.name);
-        await rename(wav.file, path.join(stage,track.name + '.wav'));
-        prints.push({ name: track.name, channels: wav.channels, frames: wav.frames });
+        const channels = options?.channels.get(track.name) ?? track.channels;
+        const file = path.join(stage, track.name + '.wav');
+        if (channels === wav.channels) await rename(wav.file, file);
+        else await writeStemWav(wav, file, channels);
+        prints.push({ name: track.name, channels, frames: wav.frames });
       }
-      const folder = path.join(runDir,'WAV');
+      const folder = path.join(runDir, options ? 'Dry' : 'WAV');
       await rename(stage,folder);
-      return { content: [{ type: 'text', text: JSON.stringify({ folder, start, end, files: prints, workingCopy: await currentSession() }) }] };
+      return { folder, start, end, files: prints, workingCopy: await currentSession() };
     } finally {
       await assertCopy();
       try { await request(C.SetMainCounterFormat,{ time_scale: counter }); }
       finally { await request(C.SetEditModeOptions,{ edit_mode_options: editOptions }); }
     }
   } catch (error) {
-    throw new Error((error instanceof Error ? error.message : String(error)) + (runDir ? ' (run folder: ' + runDir + ')' : ''));
-  } finally { printing = false; }
+    failure = error;
+    throw new Error((error instanceof Error ? error.message : String(error)) + (!options && runDir ? ' (run folder: ' + runDir + ')' : ''));
+  } finally {
+    try {
+      if (selection && copy) await restorePrintSource(client, selection, copy.work, copy.name);
+    } catch (restoreError) {
+      throw new Error([failure && String(failure), 'Could not reopen the original session: ' + String(restoreError)]
+        .filter(Boolean).join('\n'));
+    } finally {
+      printing = false;
+    }
+  }
 }

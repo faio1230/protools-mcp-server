@@ -1,5 +1,6 @@
 import { PTSLClient } from '../grpc/client.js';
 import { CommandId } from '../grpc/commands.js';
+import { getSessionTracks, sendCompleted, withSessionState } from './mixer-state.js';
 import { exec } from 'child_process';
 import { promisify } from 'util';
 import fs from 'fs';
@@ -124,15 +125,7 @@ async function analyzeAudio(
   silenceThresholdDb?: number,
   silenceMinDuration?: number
 ): Promise<any> {
-  let targetTrack: any = null;
-  // Use os.tmpdir() for cross-platform compatibility
-  // IMPORTANT: Add trailing slash - Pro Tools requires it!
-  const tmpDir = os.tmpdir().endsWith('/') ? os.tmpdir() : os.tmpdir() + '/';
-  const timestamp = Date.now();
-  const wavFileName = `pt_visual_${timestamp}.wav`;
-  const imageFileName = `pt_visual_${timestamp}.png`;
-  const wavPath = path.join(tmpDir, wavFileName);
-  const imagePath = path.join(tmpDir, imageFileName);
+  let tmpDir: string | undefined;
 
   try {
     // Step 1: Validate duration for audio mode
@@ -154,85 +147,45 @@ async function analyzeAudio(
       }
     }
 
-    // Step 2: Validate track name if in isolated mode
-    if (mode === 'isolated') {
-      if (!trackName) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: 'Error: track_name is required when mode is "isolated"',
-            },
-          ],
-          isError: true,
-        };
+    if (mode === 'isolated' && !trackName) {
+      throw new Error('track_name is required when mode is "isolated"');
+    }
+
+    const directory = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'pt-analysis-'));
+    tmpDir = directory;
+    const fileName = 'analysis';
+    const wavPath = path.join(directory, fileName + '.wav');
+    const imagePath = path.join(directory, fileName + '.png');
+    const locationType = /^\d+:\d{2}:\d{2}[:;]\d{2}$/.test(startTime) &&
+      /^\d+:\d{2}:\d{2}[:;]\d{2}$/.test(endTime) ? 'TLType_TimeCode' : undefined;
+    const exportFormat = await withSessionState(client, async (state) => {
+      const tracks = mode === 'isolated' ? await getSessionTracks(client) : [];
+      const targetTrack = tracks.find((track) => track.name === trackName);
+      if (mode === 'isolated' && !targetTrack) {
+        throw new Error(`Track "${trackName}" not found in session`);
       }
+      await state.setTimelineRange(startTime, endTime, locationType);
+      if (targetTrack) await state.soloTrack(tracks, targetTrack);
 
-      const trackListResponse = await client.sendRequest(CommandId.GetTrackList);
-      const tracks = trackListResponse.response_body?.track_list || [];
-      targetTrack = tracks.find((t: any) => t.name === trackName);
-
-      if (!targetTrack) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Error: Track "${trackName}" not found in session`,
-            },
-          ],
-          isError: true,
-        };
-      }
-    }
-
-    // Step 3: Set timeline selection
-    await client.sendRequest(CommandId.SetTimelineSelection, {
-      in_time: startTime,
-      out_time: endTime,
+      const format = targetTrack && ['TFormat_Mono', 'TF_Mono'].includes(targetTrack.format ?? '')
+        ? 'EF_Mono' : 'EF_Interleaved';
+      await sendCompleted(client, CommandId.ExportMix, {
+        file_name: fileName,
+        file_type: 'EMFType_WAV',
+        audio_info: {
+          sample_rate: 'SR_48000',
+          bit_depth: 'Bit16',
+          compression_type: 'CT_PCM',
+          export_format: format,
+        },
+        location_info: {
+          file_destination: 'EMFDestination_Directory',
+          directory: directory + path.sep,
+          import_after_bounce: 'TB_False',
+        },
+      }, 'Audio bounce');
+      return format;
     });
-
-    // Step 4: Solo track if in isolated mode
-    if (mode === 'isolated' && targetTrack) {
-      await client.sendRequest(CommandId.SetTrackSoloState, {
-        track_number_list: [targetTrack.number],
-        bool_list: [true],
-      });
-    }
-
-    // Step 5: Bounce audio to temp directory
-    // Determine export format based on track format (mono vs stereo)
-    let exportFormat = 'EF_Interleaved'; // default for mix mode
-    if (mode === 'isolated' && targetTrack) {
-      // Use mono export for mono tracks, interleaved for stereo/multichannel
-      exportFormat = targetTrack.format === 'TFormat_Mono' ? 'EF_Mono' : 'EF_Interleaved';
-    }
-
-    const exportResponse = await client.sendRequest(CommandId.ExportMix, {
-      file_name: wavFileName,
-      file_type: 'EMFType_WAV',
-      audio_info: {
-        sample_rate: 'SR_48000',
-        bit_depth: 'Bit16',
-        export_format: exportFormat,
-      },
-      location_info: {
-        file_destination: 'EMFDestination_Directory',
-        directory: tmpDir,
-        import_after_bounce: 'TB_False',
-      },
-    });
-
-    if (exportResponse.header?.status !== 'Completed') {
-      const errorJson = exportResponse.response_error_json || '{}';
-      const errorData = JSON.parse(errorJson);
-      const errorMessages =
-        errorData.errors?.map((e: any) => e.command_error_message).join(', ') || 'Unknown error';
-
-      throw new Error(`Audio bounce failed: ${errorMessages}`);
-    }
-
-    // Wait for file to be accessible
-    await new Promise((resolve) => setTimeout(resolve, 2000));
 
     // Step 6: Return based on render type
     if (renderType === 'peaks') {
@@ -268,7 +221,7 @@ async function analyzeAudio(
               `Audio file generated:\n` +
               `- Mode: ${mode}${mode === 'isolated' ? ` (track: ${trackName})` : ''}\n` +
               `- Time range: ${startTime} - ${endTime}\n` +
-              `- Sample rate: 48kHz, 16-bit stereo\n` +
+              `- Sample rate: 48kHz, 16-bit ${exportFormat === "EF_Mono" ? "mono" : "interleaved"}\n` +
               `- File size: ${(audioData.length / 1024).toFixed(2)} KB`,
           },
         ],
@@ -400,26 +353,10 @@ async function analyzeAudio(
       isError: true,
     };
   } finally {
-    // Step 9: Cleanup - always run, even if there was an error
-    try {
-      // Unsolo track if it was soloed
-      if (mode === 'isolated' && targetTrack) {
-        await client.sendRequest(CommandId.SetTrackSoloState, {
-          track_number_list: [targetTrack.number],
-          bool_list: [false],
-        });
-      }
-
-      // Delete temporary files
-      if (fs.existsSync(wavPath)) {
-        fs.unlinkSync(wavPath);
-      }
-      // Only delete image if it was created (not for audio mode)
-      if (renderType !== 'audio' && fs.existsSync(imagePath)) {
-        fs.unlinkSync(imagePath);
-      }
-    } catch (cleanupError) {
-      // Ignore cleanup errors silently
+    if (tmpDir) {
+      await fs.promises.rm(tmpDir, { recursive: true, force: true }).catch((error) => {
+        console.error(`Could not remove temporary analysis files: ${error}`);
+      });
     }
   }
 }

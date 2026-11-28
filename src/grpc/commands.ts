@@ -12,6 +12,7 @@ export enum CommandId {
   // Session Management
   CreateSession = 0,
   OpenSession = 1,
+  Import = 2,
   CloseSession = 17,
   SaveSession = 18,
   SaveSessionAs = 19,
@@ -29,6 +30,7 @@ export enum CommandId {
   // Track Operations
   GetTrackList = 3,
   SelectAllClipsOnTrack = 4,
+  RenameTargetTrack = 8,
   ConsolidateClip = 9,
   GetEditModeOptions = 79,
   SetEditModeOptions = 80,
@@ -39,6 +41,7 @@ export enum CommandId {
   // Track Properties
   SetTrackMuteState = 85,
   SetTrackFrozenState = 94,
+  SetTrackInactiveState = 93,
   SetTrackSoloState = 86,
   SetTrackRecordEnableState = 88,
 
@@ -88,6 +91,7 @@ export enum CommandId {
   // Export
   ExportClipsAsFiles = 10,
   ExportMix = 28,
+  BounceTrack = 134,
   ExportSessionInfoAsText = 30,
 
   // File Operations
@@ -116,7 +120,9 @@ export const COMMAND_PERMISSION_GROUPS = new Map<number, PermissionGroup>([
   [CommandId.SetEditModeOptions, PermissionGroup.PRINT],
   [CommandId.SetMainCounterFormat, PermissionGroup.PRINT],
   [CommandId.ConsolidateClip, PermissionGroup.PRINT],
+  [CommandId.RenameTargetTrack, PermissionGroup.PRINT],
   [CommandId.SetTrackFrozenState, PermissionGroup.PRINT],
+  [CommandId.SetTrackInactiveState, PermissionGroup.PRINT],
   [CommandId.Cut, PermissionGroup.CLIPBOARD],
   [CommandId.Paste, PermissionGroup.CLIPBOARD],
   [CommandId.Clear, PermissionGroup.CLIPBOARD],
@@ -136,6 +142,7 @@ export const COMMAND_PERMISSION_GROUPS = new Map<number, PermissionGroup>([
 
   // Session operations
   [CommandId.CreateSession, PermissionGroup.SESSION],
+  [CommandId.Import, PermissionGroup.SESSION],
   [CommandId.OpenSession, PermissionGroup.SESSION],
   [CommandId.CloseSession, PermissionGroup.SESSION],
   [CommandId.SaveSession, PermissionGroup.SESSION],
@@ -144,6 +151,7 @@ export const COMMAND_PERMISSION_GROUPS = new Map<number, PermissionGroup>([
   // Export operations
   [CommandId.ExportClipsAsFiles, PermissionGroup.EXPORT],
   [CommandId.ExportMix, PermissionGroup.EXPORT],
+  [CommandId.BounceTrack, PermissionGroup.EXPORT],
   [CommandId.ExportSessionInfoAsText, PermissionGroup.EXPORT],
 
   // Recording

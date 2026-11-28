@@ -40,7 +40,7 @@ async function main() {
   try {
     // Create and connect client
     console.error('Connecting to Pro Tools PTSL server...');
-    const client = new PTSLClient(resolvedPath);
+    const client = new PTSLClient(resolvedPath, process.env.PTSL_SERVER_ADDRESS, process.env.PTSL_SDK_VERSION);
     await client.connect();
 
     // Register connection

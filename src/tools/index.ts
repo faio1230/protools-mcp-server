@@ -11,6 +11,7 @@ import { timelineTools, handleTimelineTool } from './timeline.js';
 import { analyzeTools, handleAnalyzeTool } from './analyze.js';
 import { rawTools, handleRawTool } from './raw.js';
 import { diagnosticTools, handleDiagnosticTool } from './diagnostic.js';
+import { withSessionLock } from './session-lock.js';
 
 /**
  * All available MCP tools
@@ -30,14 +31,31 @@ export const allTools = [
   ...diagnosticTools,
 ];
 
-/**
- * Route tool calls to appropriate handlers
- */
+const exportProfile = new Set([
+  'diagnose_ptsl_connection',
+  'get_track_list',
+  'export_stems',
+  'export_dry_tracks',
+]);
+
+export function getExposedTools() {
+  return process.env.PTSL_EXPORT_ONLY === '1'
+    ? allTools.filter(tool => exportProfile.has(tool.name))
+    : allTools;
+}
 export async function handleToolCall(
   toolName: string,
   args: any,
   client: PTSLClient
 ): Promise<any> {
+  if (process.env.PTSL_EXPORT_ONLY === '1' && !exportProfile.has(toolName)) {
+    throw new Error('Tool is not enabled in this server profile.');
+  }
+  const endpoint = client.getConnectionInfo?.().endpoint ?? 'localhost:31416';
+  return await withSessionLock(endpoint, () => dispatchToolCall(toolName, args, client));
+}
+
+async function dispatchToolCall(toolName: string, args: any, client: PTSLClient): Promise<any> {
   if (toolName === dryTool.name) return exportDryTracks(client, args.tracks);
   if (toolName === stemTool.name) return exportStems(args, client);
 

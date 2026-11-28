@@ -4,7 +4,19 @@ An MCP (Model Context Protocol) server that enables AI assistants like Claude to
 
 > ⚠️ **Experimental Project:** This is a work in progress and not all Pro Tools features are implemented yet. Use at your own risk!
 
-## Stem export (fork)
+## Dry and wet multitrack delivery
+
+[日本語の設定・書き出し例](docs/stem-export-ja.md) · [One-time setup for Codex and Claude Desktop](docs/setup.md)
+
+Run `npm ci` and `npm run setup -- --client codex --export-only` on the Mac or Windows PC running Pro Tools. Set up the print presets or isolated buses described in the guide once. The MCP client starts the server. Use `diagnose_ptsl_connection` to check the SDK, host, session and track access.
+
+```json
+{"tracks":[{"name":"Instrumental","dry_channels":2,"wet_channels":2},{"name":"Lead Vox","dry_channels":1,"wet_channels":1}],"mode":"both","fader":"unity"}
+```
+
+`export_stems` creates 48 kHz / 24-bit WAVs in `Bounced Files/Stems-…/Dry` and/or `Wet`. It uses the same sample interval and verifies each WAV before reporting delivery. Dry operations save the open session before printing on a temporary copy, then reopen the source and restore its selection. Wet accepts separate auxiliary FX returns. Native track bounce uses Pro Tools 2025.6+ and a matching SDK. On older hosts, use explicitly routed buses as shown in the guide.
+
+### Existing named-bus interface
 
 The `export_stems` MCP tool bounces named buses over the current timeline selection, using 48 kHz, 24-bit interleaved PCM WAV. Use the exact bus names in the active session. The host must support the requested number of mix sources. On editions with a single-source limit, supply one bus per call.
 
@@ -22,7 +34,7 @@ Each request creates a fresh subfolder. Pro Tools names the files. The tool read
 
 The local stdio tool `export_dry_tracks` accepts a list of audio track names. It derives the session path and the common interval from the active playlists. It saves a working copy under the session's `Bounced Files` folder, consolidates the chosen clips on that copy and exports a separate 48 kHz / 24-bit WAV per track. Mono tracks stay mono and stereo tracks stay stereo. This uses clip audio before the mixer's inserts, volume, pan and sends. The working copy stays open. The published WAV folder appears after every file passes channel-count and duration checks.
 
-On a Mac with the server built and the matching SDK file configured, run `scripts/Install-Pro-Tools-MCP.command` once to register the local server with Codex. Open Pro Tools before starting a Codex session that uses it. This profile exposes track discovery, bus bounce and dry multitrack export only. Files remain on the local computer.
+The existing macOS installer delegates to the shared setup command. The export-only profile exposes diagnostics, track discovery, stem export and the legacy dry tool. Audio files stay on the Pro Tools computer.
 
 ### Pro Tools 2024.10 host check
 
@@ -403,7 +415,7 @@ Here are some things you can ask Claude to do with your Pro Tools session:
 
 ## Available Tools
 
-The MCP server provides 36 tools across multiple categories:
+The full profile includes the following tools:
 
 ### Session Management
 - **get_session_info** - Get current session name, path, and sample rate
@@ -461,6 +473,7 @@ The MCP server provides 36 tools across multiple categories:
   - Raw audio delivery
 
 ### Advanced/Diagnostics
+- **diagnose_ptsl_connection** - Check the loaded schema, registration, host version, track access, presets and export capabilities.
 - **ptsl_command** - Send raw PTSL commands directly
 - **sample_ptsl_responses** - View example PTSL API responses
 

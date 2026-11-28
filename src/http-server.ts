@@ -24,7 +24,7 @@ import path from 'path';
 import { randomUUID } from 'crypto';
 import { PTSLClient } from './grpc/client.js';
 import { loadConfig, validateConfig } from './config.js';
-import { allTools, handleToolCall } from './tools/index.js';
+import { getExposedTools, handleToolCall } from './tools/index.js';
 
 const PORT = process.env.PORT || 3000;
 const USE_HTTPS = process.env.USE_HTTPS !== 'false'; // Default to HTTPS
@@ -49,21 +49,7 @@ async function main() {
     process.exit(1);
   }
 
-  // Initialize PTSL client
-  let client: PTSLClient;
-  try {
-    client = new PTSLClient(config.protoPath, config.serverAddress);
-    await client.connect();
-    await client.registerConnection('Pro Tools MCP Server (HTTP)');
-  } catch (error) {
-    console.error(`Failed to connect to Pro Tools: ${error}`);
-    console.error('');
-    console.error('Make sure:');
-    console.error('  1. Pro Tools is running');
-    console.error('  2. PTSL server is available on localhost:31416');
-    console.error('  3. Your PTSL.proto file matches your Pro Tools version');
-    process.exit(1);
-  }
+  const client = new PTSLClient(config.protoPath, config.serverAddress, config.sdkVersion, 'Pro Tools MCP Server (HTTP)');
 
   // Create Express app
   const app = express();
@@ -85,62 +71,62 @@ async function main() {
     next();
   });
 
-  // Create MCP server once (shared across all sessions)
-  const mcpServer = new Server(
-    {
-      name: 'protools-mcp',
-      version: '0.1.0',
-    },
-    {
-      capabilities: {
-        tools: {},
-        resources: {},
-      },
-    }
-  );
-
-  // List available tools
-  mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: allTools,
-  }));
-
-  // Handle tool calls
-  mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
-    try {
-      return await handleToolCall(
-        request.params.name,
-        request.params.arguments || {},
-        client
-      );
-    } catch (error: any) {
-      return {
-        content: [
-          {
-            type: 'text',
-            text: `Error executing tool: ${error.message}`,
-          },
-        ],
-        isError: true,
-      };
-    }
-  });
-
-  // List available resources
-  mcpServer.setRequestHandler(ListResourcesRequestSchema, async () => ({
-    resources: [
+  function createMcpServer() {
+    const mcpServer = new Server(
       {
-        uri: 'ptsl://reference',
-        name: 'PTSL Command Reference',
-        description: 'Documentation of available PTSL commands and the Pro Tools data model',
-        mimeType: 'text/markdown',
+        name: 'protools-mcp',
+        version: '0.1.0',
       },
-    ],
-  }));
+      {
+        capabilities: {
+          tools: {},
+          resources: {},
+        },
+      }
+    );
 
-  // Read resource content
-  mcpServer.setRequestHandler(ReadResourceRequestSchema, async (request) => {
-    if (request.params.uri === 'ptsl://reference') {
-      const content = `# PTSL Command Reference
+    // List available tools
+    mcpServer.setRequestHandler(ListToolsRequestSchema, async () => ({
+      tools: getExposedTools(),
+    }));
+
+    // Handle tool calls
+    mcpServer.setRequestHandler(CallToolRequestSchema, async (request) => {
+      try {
+        return await handleToolCall(
+          request.params.name,
+          request.params.arguments || {},
+          client
+        );
+      } catch (error: any) {
+        return {
+          content: [
+            {
+              type: 'text',
+              text: `Error executing tool: ${error.message}`,
+            },
+          ],
+          isError: true,
+        };
+      }
+    });
+
+    // List available resources
+    mcpServer.setRequestHandler(ListResourcesRequestSchema, async () => ({
+      resources: [
+        {
+          uri: 'ptsl://reference',
+          name: 'PTSL Command Reference',
+          description: 'Documentation of available PTSL commands and the Pro Tools data model',
+          mimeType: 'text/markdown',
+        },
+      ],
+    }));
+
+    // Read resource content
+    mcpServer.setRequestHandler(ReadResourceRequestSchema, async (request) => {
+      if (request.params.uri === 'ptsl://reference') {
+        const content = `# PTSL Command Reference
 
 ## Overview
 
@@ -313,19 +299,22 @@ Use \`ptsl_command\` for:
 - Exploring PTSL capabilities
 `;
 
-      return {
-        contents: [
-          {
-            uri: request.params.uri,
-            mimeType: 'text/markdown',
-            text: content,
-          },
-        ],
-      };
-    }
+        return {
+          contents: [
+            {
+              uri: request.params.uri,
+              mimeType: 'text/markdown',
+              text: content,
+            },
+          ],
+        };
+      }
 
-    throw new Error(`Unknown resource: ${request.params.uri}`);
-  });
+      throw new Error(`Unknown resource: ${request.params.uri}`);
+    });
+
+    return mcpServer;
+  }
 
   // Store active transports by session ID
   const transports: { [sessionId: string]: StreamableHTTPServerTransport } = {};
@@ -352,7 +341,7 @@ Use \`ptsl_command\` for:
           console.log(`Session initialized: ${newSessionId}`);
         },
       });
-      await mcpServer.connect(transport);
+      await createMcpServer().connect(transport);
       await transport.handleRequest(req, res, req.body);
     } else if (sessionId && !transports[sessionId]) {
       // Session ID provided but session doesn't exist and not an initialize request - error
@@ -414,7 +403,7 @@ Use \`ptsl_command\` for:
         res.status(400).json({ error: 'No active session found' });
       }
     } else if (!sessionId && isInitializeRequest(req.body)) {
-      // New session - create transport and connect to shared server
+      // New session - create a transport and an MCP server
       console.log('New MCP connection established');
 
       // Create transport with session management callback
@@ -427,8 +416,8 @@ Use \`ptsl_command\` for:
         },
       });
 
-      // Connect the shared server to the new transport
-      await mcpServer.connect(transport);
+      // Connect the MCP server to the new transport
+      await createMcpServer().connect(transport);
 
       // Handle the initialize request
       await transport.handleRequest(req, res, req.body);
@@ -501,7 +490,6 @@ Use \`ptsl_command\` for:
     console.log('');
     console.log(`  Server URL: ${protocol}://localhost:${PORT}/mcp`);
     console.log(`  Health check: ${protocol}://localhost:${PORT}/health`);
-    console.log(`  Pro Tools session: ${client.getSessionId()}`);
     console.log('');
     console.log('Add this URL to Claude Cowork:');
     console.log(`  ${protocol}://localhost:${PORT}/mcp`);
